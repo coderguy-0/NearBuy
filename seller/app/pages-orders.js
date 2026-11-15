@@ -106,7 +106,7 @@ function fulfilmentCard(f, order) {
       ['network', 'Find a NearBuy runner', 'A verified delivery partner collects it and delivers it.']]) {
       if (mode === f.mode) continue;
       actions.push(h('button.btn', { type: 'button', title: hint, onClick: (e) => busy(e.currentTarget, async () => {
-        const res = await api(`/orders/${order.code}/fulfilment`, { method: 'POST', body: { mode } });
+        const res = await api(`/seller/orders/${order.code}/fulfilment`, { method: 'POST', body: { mode } });
         toast(mode === 'self' ? 'Your shop will deliver this order.' : 'This order will be delivered by a NearBuy partner.', 'success');
         if (res && res.fulfilment) reload();
       }) }, mode === 'self' ? 'Deliver it myself' : 'Find a NearBuy runner'));
@@ -118,12 +118,18 @@ function fulfilmentCard(f, order) {
       action: { path: `/seller/orders/${order.code}/collect`, order: order.code }, label: 'Confirm collection' });
   }
   if (f.mode === 'self' && ['packed', 'ready_to_ship', 'shipped'].includes(order.status)) {
-    interactive = codeEntry({ title: 'Delivery code', help: 'Ask the customer for the 4-digit delivery code from their order page, then confirm it.',
-      action: { path: `/seller/orders/${order.code}/self-delivered`, order: order.code }, label: 'Confirm delivery' });
+    interactive = h('div.stack.sm',
+      order.status !== 'shipped' ? h('div.row', h('button.btn', { type: 'button', onClick: (e) => busy(e.currentTarget, async () => {
+        const res = await api(`/seller/orders/${order.code}/self-dispatch`, { method: 'POST', body: {} });
+        toast(res.message || 'Marked out for delivery.', 'success');
+        reload();
+      }) }, 'Mark out for delivery (shop staff)')) : null,
+      codeEntry({ title: 'Delivery code', help: 'Ask the customer for the 4-digit delivery code from their order page, then confirm it.',
+        action: { path: `/seller/orders/${order.code}/self-delivered`, order: order.code }, label: 'Confirm delivery' }));
   }
   return card({
     title: 'Fulfilment', subtitle: f.instructions,
-    actions: [modeBadge, f.delivery && f.delivery.code ? h('a.btn.sm', { href: `/seller/deliveries/${f.delivery.code}` }, `Delivery ${f.delivery.code}`) : null],
+    actions: [modeBadge, f.delivery && f.delivery.code ? h('a.btn.sm.primary', { href: `/seller/deliveries/${f.delivery.code}` }, f.delivery.partner_id ? `Delivery ${f.delivery.code}` : `Find a runner (${f.delivery.code})`) : null],
     body: h('div.stack.sm', steps, actions.length ? h('div.row.wrap', h('span.small.muted', 'Change how this order is delivered:'), actions) : null, interactive),
   });
 }

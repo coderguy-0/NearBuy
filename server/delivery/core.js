@@ -15,8 +15,11 @@ const CONFIG = {
   geofenceM: () => Number(process.env.DELIVERY_GEOFENCE_M || 250),
   locationFreshMs: () => Number(process.env.DELIVERY_LOCATION_FRESH_SECONDS || 300) * 1000,
   locationRetentionDays: () => Number(process.env.DELIVERY_LOCATION_RETENTION_DAYS || 30),
+  codeTtlMs: () => Math.max(60000, Number(process.env.DELIVERY_CODE_TTL_HOURS || 24) * 3600000),
   roadFactor: 1.35,
 };
+/** Coarse (~300m) privacy-protected coordinates for pre-assignment runner discovery. */
+const approxCoord = (lat, lng) => (validCoord(lat, lng) ? { lat: Number((Math.round(lat * 300) / 300).toFixed(4)), lng: Number((Math.round(lng * 300) / 300).toFixed(4)) } : null);
 
 /* ---------- Geography ---------- */
 const rad = (d) => (d * Math.PI) / 180;
@@ -131,7 +134,14 @@ function subscribe(res, topics) {
   return () => subscribers.delete(sub);
 }
 setInterval(() => { for (const sub of subscribers) { try { sub.res.write(': keep-alive\n\n'); } catch { subscribers.delete(sub); } } }, 20000).unref();
-const deliveryTopics = (d) => ['admin', `seller:${d.seller_id}`, `delivery:${d.id}`, d.partner_id ? `partner:${d.partner_id}` : null, d.fleet_id ? `fleet:${d.fleet_id}` : null];
+function customerParentForOrder(orderId) {
+  if (!orderId) return null;
+  return get('SELECT co.id, co.code, co.user_id FROM orders o JOIN customer_orders co ON co.id = o.customer_order_id WHERE o.id = ?', orderId) || null;
+}
+function deliveryTopics(d) {
+  const parent = customerParentForOrder(d.order_id);
+  return ['admin', `seller:${d.seller_id}`, `delivery:${d.id}`, parent ? `customer:${parent.user_id}` : null, d.partner_id ? `partner:${d.partner_id}` : null, d.fleet_id ? `fleet:${d.fleet_id}` : null];
+}
 
 /* ---------- Audit, notifications ---------- */
 function audit(actor, action, entity, ref, detail) {
@@ -148,8 +158,42 @@ function dnotify(audience, target, type, title, body) {
   });
   publish(audience === 'partner' ? `partner:${target.partner_id}` : audience === 'fleet' ? `fleet:${target.fleet_id}` : audience === 'customer' ? `delivery:${target.delivery_id}` : 'admin', { kind: 'notification', type });
 }
-const notifySeller = (d, title, body) => notify(d.seller_id, 'shipping', title, body, '/seller/deliveries');
-const notifyCustomer = (d, type, title, body) => dnotify('customer', { delivery_id: d.id }, type, title, body);
+function notifySeller(d, title, body) {
+  notify(d.seller_id, 'shipping', title, body, `/seller/deliveries/${d.code}`);
+  publish(`seller:${d.seller_id}`, { kind: 'notification', type: 'shipping', code: d.code });
+}
+function notifyCustomer(d, type, title, body) {
+  dnotify('customer', { delivery_id: d.id }, type, title, body);
+  const parent = customerParentForOrder(d.order_id);
+  if (parent) {
+    insert('customer_notifications', {
+      user_id: parent.user_id, type: 'delivery', title, body: body || null,
+      link: `/customer/#/orders/${parent.code}`, created_at: nowIso(),
+    });
+    publish(`customer:${parent.user_id}`, { kind: 'notification', type, order_code: parent.code });
+  }
+}
+function notifyCustomerForOrder(order, type, title, body) {
+  if (!order || !order.customer_order_id) return;
+  const parent = get('SELECT id, code, user_id FROM customer_orders WHERE id = ?', order.customer_order_id);
+  if (!parent) return;
+  insert('customer_notifications', {
+    user_id: parent.user_id, type: type || 'order', title, body: body || null,
+    link: `/customer/#/orders/${parent.code}`, created_at: nowIso(),
+  });
+  publish(`customer:${parent.user_id}`, { kind: 'order', type: type || 'order', order_code: parent.code });
+}
+function syncCustomerOrderStatus(customerOrderId) {
+  if (!customerOrderId) return;
+  const rows = all('SELECT status FROM orders WHERE customer_order_id = ?', customerOrderId);
+  if (!rows.length) return;
+  const statuses = rows.map((r) => r.status);
+  const next = statuses.every((s) => s === 'cancelled') ? 'cancelled'
+    : statuses.every((s) => s === 'delivered') ? 'delivered'
+      : statuses.some((s) => s === 'cancelled') && statuses.every((s) => s === 'cancelled' || s === 'delivered') ? 'partly_cancelled'
+        : 'in_progress';
+  run('UPDATE customer_orders SET status = ?, updated_at = ? WHERE id = ?', next, nowIso(), customerOrderId);
+}
 const notifyPartner = (partnerId, type, title, body, deliveryId) => dnotify('partner', { partner_id: partnerId, delivery_id: deliveryId }, type, title, body);
 const notifyAdmin = (type, title, body, deliveryId) => dnotify('admin', { delivery_id: deliveryId }, type, title, body);
 
@@ -219,7 +263,7 @@ const firstName = (name) => String(name || '').trim().split(/\s+/)[0] || 'Partne
 const txnCode = () => nextCode('ETX', 500000);
 
 module.exports = {
-  PRODUCTION, TEST_TOOLS, CONFIG, haversineKm, roadKm, validCoord, zonePins, zoneForPincode, geocode, zoneOpenNow, feeRule, quoteFee, quoteEarning,
-  travelMin, estimateEta, refreshEta, publish, subscribe, deliveryTopics, audit, SYSTEM, dnotify, notifySeller, notifyCustomer, notifyPartner,
+  PRODUCTION, TEST_TOOLS, CONFIG, haversineKm, roadKm, validCoord, approxCoord, zonePins, zoneForPincode, geocode, zoneOpenNow, feeRule, quoteFee, quoteEarning,
+  travelMin, estimateEta, refreshEta, publish, subscribe, deliveryTopics, customerParentForOrder, audit, SYSTEM, dnotify, notifySeller, notifyCustomer, notifyCustomerForOrder, syncCustomerOrderStatus, notifyPartner,
   notifyAdmin, setStatus, storeFile, readFile, removeFile, signedFileLink, checkFileLink, newCode, label, firstName, txnCode, sha256,
 };

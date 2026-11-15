@@ -59,7 +59,10 @@ test('a partner registers and completes the onboarding steps', async () => {
   }
   const zones = ok(await partner.get('/api/partners/zones')).zones;
   s.zone = zones.find((z) => z.name === 'South Delhi');
-  ok(await partner.patch('/api/partners/profile', { city: 'New Delhi', home_zone_id: s.zone.id, language: 'Hindi', emergency_name: 'Ravi Verma', emergency_phone: '9876509999' }));
+  // Under-18 applicants must be refused server-side.
+  const minor = await partner.patch('/api/partners/profile', { date_of_birth: '2012-05-10', city: 'New Delhi', home_zone_id: s.zone.id, language: 'Hindi', emergency_name: 'Ravi Verma', emergency_phone: '9876509999' });
+  assert.equal(minor.status, 400);
+  ok(await partner.patch('/api/partners/profile', { date_of_birth: '1996-04-12', city: 'New Delhi', home_zone_id: s.zone.id, language: 'Hindi', emergency_name: 'Ravi Verma', emergency_phone: '9876509999' }));
   assert.equal((await partner.put('/api/partners/vehicle', { type: 'two_wheeler' })).status, 400); // registration needed
   ok(await partner.put('/api/partners/vehicle', { type: 'bicycle' }));
   assert.equal((await partner.post('/api/partners/documents?kind=identity&name=id.txt', Buffer.from('not an image'))).status, 400);

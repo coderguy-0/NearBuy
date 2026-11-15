@@ -56,25 +56,88 @@ route('GET', '/api/seller/deliveries/:code/candidates', { perm: 'orders.read' },
   const list = rows.map((p) => {
     const hit = scored.find((s) => s.partner.id === p.id);
     const vehicle = E.vehicleOf(p.id);
+    const spec = vehicle ? S.VEHICLES[vehicle.type] : null;
     const reasons = E.ineligibility(p, d);
+    const completed = get("SELECT COUNT(*) AS n FROM deliveries WHERE partner_id = ? AND status = 'delivered'", p.id).n;
+    const weightKg = r2((d.weight_g || 0) / 1000);
+    const fitsParcel = spec ? (weightKg <= spec.max_kg && d.distance_km <= spec.max_km) : false;
+    const vType = vehicle ? vehicle.type : 'two_wheeler';
+    const tripMin = Math.round(C.travelMin(d.distance_km, vType));
+    const approx = p.online && C.validCoord(p.last_lat, p.last_lng) ? C.approxCoord(p.last_lat, p.last_lng) : null;
     return {
       code: p.code, name: p.name, online: Boolean(p.online),
-      vehicle: vehicle ? S.VEHICLES[vehicle.type].label : null,
+      vehicle: spec ? spec.label : null,
       vehicle_type: vehicle ? vehicle.type : null,
+      max_kg: spec ? spec.max_kg : null,
+      max_km: spec ? spec.max_km : null,
+      fits_parcel: fitsParcel,
       eligible: open && !reasons.length, reasons,
-      rating: p.rating_count ? r2(p.rating_sum / p.rating_count) : null, deliveries_done: p.rating_count || 0,
-      score: hit ? hit.score : null, pickup_km: hit ? r2(hit.km) : null, pickup_eta_min: hit ? Math.round(hit.eta) : null,
-      trip_eta_min: hit ? Math.round(hit.eta + C.travelMin(d.distance_km, 'two_wheeler')) : Math.round(C.travelMin(d.distance_km, 'two_wheeler')),
+      rating: p.rating_count ? r2(p.rating_sum / p.rating_count) : null,
+      deliveries_done: completed || p.rating_count || 0,
+      score: hit ? hit.score : null,
+      pickup_km: hit ? r2(hit.km) : (p.online && C.validCoord(p.last_lat, p.last_lng) ? r2(C.roadKm(p.last_lat, p.last_lng, d.pickup_lat, d.pickup_lng)) : null),
+      pickup_eta_min: hit ? Math.round(hit.eta) : null,
+      trip_eta_min: hit ? Math.round(hit.eta + tripMin) : tripMin,
       earning: d.partner_earning,
+      approx_location: approx,
     };
-  }).sort((a, b) => (b.eligible - a.eligible) || ((b.score || -1) - (a.score || -1)) || a.pickup_km - b.pickup_km);
+  }).sort((a, b) => (b.eligible - a.eligible) || ((b.score || -1) - (a.score || -1)) || ((a.pickup_km ?? 99) - (b.pickup_km ?? 99)));
+  const activeOffer = get(`SELECT o.id, o.expires_at, o.created_at AS offered_at, p.code AS partner_code, u.name AS partner_name
+    FROM delivery_offers o JOIN delivery_partners p ON p.id = o.partner_id JOIN users u ON u.id = p.user_id
+    WHERE o.delivery_id = ? AND o.status = 'offered' ORDER BY o.id DESC LIMIT 1`, d.id);
+  const orderRow = get('SELECT code FROM orders WHERE id = ?', d.order_id);
   return {
-    delivery: { code: d.code, status: d.status, status_label: C.label(d.status), category: S.CATEGORIES[d.category], distance_km: d.distance_km,
-      package_type: d.package_type, package_count: d.package_count, weight_kg: r2((d.weight_g || 0) / 1000), earning: d.partner_earning,
-      pickup_name: d.pickup_name, drop_area: d.drop_area, ready: Boolean(d.ready_at), open },
+    delivery: {
+      code: d.code, order_code: orderRow ? orderRow.code : null, status: d.status, status_label: C.label(d.status),
+      category: S.CATEGORIES[d.category], distance_km: d.distance_km,
+      package_type: d.package_type, package_count: d.package_count, weight_g: d.weight_g || 0,
+      weight_kg: r2((d.weight_g || 0) / 1000), special_handling: Boolean(d.special_handling),
+      pickup_instructions: d.pickup_instructions || null, earning: d.partner_earning,
+      pickup_name: d.pickup_name, pickup_point: C.validCoord(d.pickup_lat, d.pickup_lng) ? { lat: d.pickup_lat, lng: d.pickup_lng } : null,
+      drop_area: d.drop_area, drop_point: C.validCoord(d.drop_lat, d.drop_lng) ? C.approxCoord(d.drop_lat, d.drop_lng) : null,
+      ready: Boolean(d.ready_at), open,
+      pending_offer: activeOffer || null,
+    },
     candidates: list,
     eligible_count: list.filter((c) => c.eligible).length,
   };
+});
+route('PATCH', '/api/seller/deliveries/:code/parcel', { perm: 'orders.write' }, (ctx) => {
+  const data = validate(ctx.body, {
+    package_count: { type: 'int', min: 1, max: 50 },
+    weight_g: { type: 'int', min: 50, max: 150000 },
+    special_handling: { type: 'bool' },
+    pickup_instructions: { max: 240 },
+  }, { partial: true });
+  return tx(() => {
+    const d = sellerDelivery(ctx);
+    if (!S.UNASSIGNED.includes(d.status)) throw conflict('Parcel details can only be changed before a runner is assigned.');
+    const patch = { updated_at: nowIso() };
+    if (data.package_count !== undefined) patch.package_count = data.package_count;
+    if (data.weight_g !== undefined) patch.weight_g = data.weight_g;
+    if (data.special_handling !== undefined) patch.special_handling = data.special_handling ? 1 : 0;
+    if (data.pickup_instructions !== undefined) patch.pickup_instructions = data.pickup_instructions || null;
+    run(`UPDATE deliveries SET ${Object.keys(patch).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`, ...Object.values(patch), d.id);
+    C.audit(sellerActor(ctx), 'Updated parcel details', 'delivery', d.code);
+    return { ok: true, delivery: V.forSeller(get('SELECT * FROM deliveries WHERE id = ?', d.id)) };
+  });
+});
+route('POST', '/api/seller/deliveries/:code/cancel-offer', { perm: 'orders.write' }, (ctx) => tx(() => {
+  const d = sellerDelivery(ctx);
+  if (d.status !== 'offer_sent') throw conflict('There is no pending offer to cancel.');
+  const offer = get("SELECT * FROM delivery_offers WHERE delivery_id = ? AND status = 'offered' ORDER BY id DESC LIMIT 1", d.id);
+  if (offer) {
+    run("UPDATE delivery_offers SET status = 'withdrawn', responded_at = ? WHERE id = ?", nowIso(), offer.id);
+    C.publish(`partner:${offer.partner_id}`, { kind: 'offer' });
+  }
+  const next = C.setStatus(d, 'searching_partner', sellerActor(ctx), 'Seller cancelled the pending offer to choose another runner.');
+  C.audit(sellerActor(ctx), 'Cancelled pending runner offer', 'delivery', d.code);
+  return { ok: true, delivery: V.forSeller(next) };
+}));
+route('POST', '/api/seller/deliveries/:code/refresh-pin', { perm: 'orders.write' }, (ctx) => {
+  const d = sellerDelivery(ctx);
+  const refreshed = E.refreshDeliveryCode(d, 'pickup', sellerActor(ctx));
+  return { ok: true, pickup_code: refreshed.code, expires_at: refreshed.expires_at };
 });
 /** Appoint one runner: a time-limited offer to that partner, accepted in the partner app. */
 route('POST', '/api/seller/deliveries/:code/appoint', { perm: 'orders.write' }, (ctx) => {

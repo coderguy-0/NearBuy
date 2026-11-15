@@ -20,6 +20,11 @@ function topicsFor(req, url) {
     const auth = resolveSession(req);
     return auth && auth.seller ? [`seller:${auth.seller.id}`] : null;
   }
+  if (portal === 'customer') {
+    const { customerFromRequest } = require('../routes/customer');
+    const customer = customerFromRequest(req);
+    return customer ? [`customer:${customer.user.id}`] : null;
+  }
   if (portal === 'track') {
     const token = url.searchParams.get('t') || '';
     const d = token.length >= 16 ? get('SELECT id FROM deliveries WHERE track_token = ?', token) : null;

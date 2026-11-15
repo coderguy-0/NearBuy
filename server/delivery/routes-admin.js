@@ -61,6 +61,16 @@ A('GET', '/api/admin/dashboard', () => {
     week: { average_delivery_minutes: avg ? Math.round(avg) : null, success_rate: closed.n ? Math.round((closed.ok / closed.n) * 100) : null, closed: closed.n },
     settlements: { open: open.n, partner_earnings_unsettled: r2(open.earnings), cod_with_partners: r2(open.cod) },
     open_tickets: get("SELECT COUNT(*) AS n FROM delivery_tickets WHERE status != 'resolved'").n, open_incidents: get("SELECT COUNT(*) AS n FROM incidents WHERE status = 'open'").n,
+    marketplace: {
+      sellers_approved: get("SELECT COUNT(*) AS n FROM sellers WHERE status = 'approved'").n,
+      sellers_pending: get("SELECT COUNT(*) AS n FROM sellers WHERE status IN ('under_review','onboarding','needs_info')").n,
+      listings_pending: get("SELECT COUNT(*) AS n FROM products WHERE status = 'under_review'").n,
+      listings_active: get("SELECT COUNT(*) AS n FROM products WHERE status = 'active'").n,
+      customers: get('SELECT COUNT(*) AS n FROM customer_profiles').n,
+      customer_orders_today: get('SELECT COUNT(*) AS n FROM customer_orders WHERE created_at BETWEEN ? AND ?', from, to).n,
+      open_returns: get("SELECT COUNT(*) AS n FROM returns WHERE status NOT IN ('completed','rejected')").n,
+      open_seller_tickets: get("SELECT COUNT(*) AS n FROM support_tickets WHERE status != 'resolved'").n,
+    },
     alerts: all("SELECT id, type, title, body, read_at, created_at, (SELECT code FROM deliveries WHERE id = n.delivery_id) AS delivery_code FROM delivery_notifications n WHERE audience = 'admin' ORDER BY id DESC LIMIT 12"),
   };
 });
@@ -231,6 +241,7 @@ A('GET', '/api/admin/partners/:code', (ctx) => {
   return {
     partner: {
       ...partnerSummary(p), email: p.email, mobile: p.mobile, mobile_verified: Boolean(p.mobile_verified_at), email_verified: Boolean(p.email_verified_at), status_note: p.status_note,
+      date_of_birth: p.date_of_birth || null, age: p.date_of_birth ? S.computeAge(p.date_of_birth) : null,
       language: p.language, emergency_name: p.emergency_name, emergency_phone_masked: maskMobile(p.emergency_phone), categories: parseJson(p.categories, []),
       payout: p.payout_status === 'missing' ? null : { holder: p.payout_holder, bank: p.payout_bank, account_ending: p.payout_last4, ifsc: p.payout_ifsc, status: p.payout_status },
       training_completed_at: p.training_completed_at, documents_valid_until: p.documents_valid_until, fleet_hold: Boolean(p.fleet_hold), last_location_at: p.last_location_at,
@@ -262,6 +273,7 @@ A('PATCH', '/api/admin/partners/:code/approval', (ctx) => {
     if (!def.from.includes(p.status)) throw conflict(`This decision is not possible while the application is ${S.APPLICATION_STATUS[p.status].toLowerCase()}.`);
     if (def.note && !data.note) throw bad('Give the partner a reason.', { note: 'Explain the decision.' });
     if (def.to === 'approved') {
+      if (!p.date_of_birth || S.computeAge(p.date_of_birth) < 18) throw conflict('Partner must have a verified date of birth showing they are at least 18 years old before approval.');
       const vehicle = E.vehicleOf(p.id);
       const docs = all('SELECT kind, status FROM partner_documents WHERE partner_id = ?', p.id);
       const unverified = PR.requiredDocuments(vehicle).filter((k) => !docs.some((d) => d.kind === k && d.status === 'verified'));
@@ -642,6 +654,139 @@ A('POST', '/api/admin/fleets', (ctx) => {
     return code;
   });
   return reply.created({ ok: true, code: created });
+});
+
+/* ---------- Unified Marketplace Admin Operations ---------- */
+A('GET', '/api/admin/sellers', (ctx) => {
+  const where = ['1 = 1']; const params = [];
+  if (ctx.query.status && ctx.query.status !== 'all') { where.push('s.status = ?'); params.push(ctx.query.status); }
+  const rows = all(`SELECT s.id, s.code, s.business_name, s.store_name, s.business_type, s.status, s.status_note, s.is_open, s.operating_hours, s.service_radius_km, s.created_at, s.approved_at, s.is_demo,
+      (SELECT u.email FROM seller_memberships m JOIN users u ON u.id = m.user_id WHERE m.seller_id = s.id AND m.role = 'owner' LIMIT 1) AS owner_email,
+      (SELECT u.name FROM seller_memberships m JOIN users u ON u.id = m.user_id WHERE m.seller_id = s.id AND m.role = 'owner' LIMIT 1) AS owner_name,
+      (SELECT p.pincode FROM seller_pickup_locations p WHERE p.seller_id = s.id ORDER BY p.is_default DESC, p.id LIMIT 1) AS pincode,
+      (SELECT COUNT(*) FROM products pr WHERE pr.seller_id = s.id AND pr.status = 'active') AS active_listings,
+      (SELECT COUNT(*) FROM products pr WHERE pr.seller_id = s.id AND pr.status = 'under_review') AS pending_listings,
+      (SELECT COUNT(*) FROM orders o WHERE o.seller_id = s.id) AS total_orders,
+      (SELECT COALESCE(SUM(o.total), 0) FROM orders o WHERE o.seller_id = s.id AND o.status != 'cancelled') AS gmv
+    FROM sellers s WHERE ${where.join(' AND ')} ORDER BY s.id DESC LIMIT 200`, ...params);
+  return { sellers: rows.map((r) => ({ ...r, is_open: r.is_open !== 0, gmv: r2(r.gmv) })) };
+});
+A('POST', '/api/admin/sellers/:code/review', (ctx) => {
+  const data = validate(ctx.body, { decision: { required: true, enum: ['approve', 'needs_info', 'reject', 'suspend'] }, note: { max: 500 } });
+  const seller = get('SELECT * FROM sellers WHERE code = ?', ctx.params.code);
+  if (!seller) throw notFound('Seller');
+  if (data.decision !== 'approve' && !data.note) throw bad('Give a reason for this decision.', { note: 'Explain what needs attention.' });
+  const nextStatus = { approve: 'approved', needs_info: 'needs_info', reject: 'rejected', suspend: 'suspended' }[data.decision];
+  const at = nowIso();
+  tx(() => {
+    run('UPDATE sellers SET status = ?, status_note = ? WHERE id = ?',
+      nextStatus, data.note || null, seller.id);
+    if (nextStatus === 'suspended') run('UPDATE sellers SET is_open = 0 WHERE id = ?', seller.id);
+    require('../db').notify(seller.id, 'account', `Store status updated: ${nextStatus.replace('_', ' ')}`, data.note || 'Your seller account was reviewed by NearBuy operations.', '/seller/account/overview');
+    C.audit(ctx.actor, `Seller ${data.decision}`, 'seller', seller.code, data.note || nextStatus);
+  });
+  C.publish(['admin', `seller:${seller.id}`], { kind: 'account', status: nextStatus });
+  return { ok: true, status: nextStatus };
+});
+A('GET', '/api/admin/listings', (ctx) => {
+  const where = ['1 = 1']; const params = [];
+  if (ctx.query.status && ctx.query.status !== 'all') { where.push('p.status = ?'); params.push(ctx.query.status); }
+  const rows = all(`SELECT p.id, p.code, p.title, p.brand, p.category, p.price, p.mrp, p.status, p.qc_notes, p.created_at,
+      s.code AS seller_code, s.store_name,
+      (SELECT COALESCE(SUM(i.on_hand - i.reserved), 0) FROM inventory i WHERE i.product_id = p.id) AS available_stock
+    FROM products p JOIN sellers s ON s.id = p.seller_id WHERE ${where.join(' AND ')} ORDER BY (CASE WHEN p.status = 'under_review' THEN 0 ELSE 1 END), p.id DESC LIMIT 200`, ...params);
+  return { listings: rows };
+});
+A('POST', '/api/admin/listings/:code/review', (ctx) => {
+  const data = validate(ctx.body, { decision: { required: true, enum: ['approve', 'reject', 'deactivate'] }, note: { max: 400 } });
+  const product = get('SELECT * FROM products WHERE code = ?', ctx.params.code);
+  if (!product) throw notFound('Product listing');
+  if (data.decision !== 'approve' && !data.note) throw bad('Give a reason for this action.', { note: 'Provide a note for the seller.' });
+  const nextStatus = { approve: 'active', reject: 'rejected', deactivate: 'inactive' }[data.decision];
+  tx(() => {
+    const notes = JSON.parse(product.qc_notes || '[]');
+    if (data.note) notes.push({ at: nowIso(), by: ctx.user.name, decision: data.decision, note: data.note });
+    run('UPDATE products SET status = ?, qc_notes = ?, updated_at = ? WHERE id = ?', nextStatus, JSON.stringify(notes), nowIso(), product.id);
+    require('../db').notify(product.seller_id, 'catalog', `Listing ${product.code} ${nextStatus}`, `${product.title}${data.note ? ` — ${data.note}` : ''}`, `/seller/products/${product.code}`);
+    C.audit(ctx.actor, `Listing ${data.decision}`, 'product', product.code, data.note || nextStatus);
+  });
+  return { ok: true, status: nextStatus };
+});
+A('GET', '/api/admin/customers', (ctx) => {
+  const q = String(ctx.query.q || '').trim().toLowerCase();
+  const rows = all(`SELECT u.id, u.name, u.email, u.mobile, u.created_at, u.last_login_at, u.suspended_at, u.suspend_reason,
+      cp.pincode, cp.area, cp.city,
+      (SELECT COUNT(*) FROM customer_orders co WHERE co.user_id = u.id) AS order_count,
+      (SELECT COALESCE(SUM(co.total), 0) FROM customer_orders co WHERE co.user_id = u.id AND co.status != 'cancelled') AS total_spent
+    FROM users u JOIN customer_profiles cp ON cp.user_id = u.id ORDER BY u.id DESC LIMIT 200`);
+  const filtered = q ? rows.filter((r) => `${r.name} ${r.email} ${r.pincode || ''}`.toLowerCase().includes(q)) : rows;
+  return { customers: filtered.map((r) => ({ ...r, total_spent: r2(r.total_spent), suspended: Boolean(r.suspended_at) })) };
+});
+A('POST', '/api/admin/customers/:id/status', (ctx) => {
+  const id = Number(ctx.params.id);
+  const user = get('SELECT u.* FROM users u JOIN customer_profiles cp ON cp.user_id = u.id WHERE u.id = ?', id);
+  if (!user) throw notFound('Customer');
+  const data = validate(ctx.body, { action: { required: true, enum: ['suspend', 'reinstate'] }, reason: { max: 300 } });
+  if (data.action === 'suspend' && !data.reason) throw bad('Provide a reason to suspend this account.', { reason: 'Explain why the account is suspended.' });
+  tx(() => {
+    if (data.action === 'suspend') {
+      run('UPDATE users SET suspended_at = ?, suspend_reason = ? WHERE id = ?', nowIso(), data.reason, id);
+      run('DELETE FROM sessions WHERE user_id = ?', id);
+    } else {
+      run('UPDATE users SET suspended_at = NULL, suspend_reason = NULL WHERE id = ?', id);
+    }
+    C.audit(ctx.actor, `Customer ${data.action}`, 'customer', String(id), data.reason || user.email);
+  });
+  return { ok: true, suspended: data.action === 'suspend' };
+});
+A('GET', '/api/admin/orders', (ctx) => {
+  const where = ['1 = 1']; const params = [];
+  if (ctx.query.status && ctx.query.status !== 'all') { where.push('o.status = ?'); params.push(ctx.query.status); }
+  const rows = all(`SELECT o.code, o.placed_at, o.status, o.fulfilment, o.delivery_mode, o.payment_method, o.payment_status,
+      o.subtotal, o.shipping_charge, o.total, o.customer_ref, o.ship_pincode, o.is_demo,
+      s.code AS seller_code, s.store_name,
+      co.code AS customer_order_code,
+      (SELECT d.code FROM deliveries d WHERE d.order_id = o.id AND d.kind = 'forward' ORDER BY d.id DESC LIMIT 1) AS delivery_code,
+      (SELECT d.status FROM deliveries d WHERE d.order_id = o.id AND d.kind = 'forward' ORDER BY d.id DESC LIMIT 1) AS delivery_status
+    FROM orders o JOIN sellers s ON s.id = o.seller_id LEFT JOIN customer_orders co ON co.id = o.customer_order_id
+    WHERE ${where.join(' AND ')} ORDER BY o.id DESC LIMIT 200`, ...params);
+  return { orders: rows };
+});
+A('GET', '/api/admin/disputes', () => ({
+  seller_tickets: all(`SELECT t.*, s.code AS seller_code, s.store_name FROM support_tickets t JOIN sellers s ON s.id = t.seller_id ORDER BY (CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END), t.id DESC LIMIT 100`),
+  returns: all(`SELECT r.code, r.status, r.refund_status, r.reason, r.qty, r.requested_at, o.code AS order_code, s.code AS seller_code, s.store_name
+    FROM returns r JOIN orders o ON o.id = r.order_id JOIN sellers s ON s.id = r.seller_id ORDER BY r.id DESC LIMIT 100`),
+  customer_complaints: all(`SELECT t.*, (SELECT code FROM deliveries WHERE id = t.delivery_id) AS delivery_code, (SELECT store_name FROM sellers WHERE id = t.seller_id) AS store_name,
+    COALESCE((SELECT author_name FROM delivery_ticket_messages WHERE ticket_id = t.id ORDER BY id LIMIT 1), 'Customer') AS created_by
+    FROM delivery_tickets t WHERE t.raised_by = 'customer' ORDER BY (CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END), t.id DESC LIMIT 100`),
+}));
+A('POST', '/api/admin/seller-tickets/:code/reply', (ctx) => {
+  const data = validate(ctx.body, { message: { required: true, min: 2, max: 1200 }, status: { enum: ['open', 'in_progress', 'waiting_on_seller', 'resolved'] } });
+  const ticket = get('SELECT * FROM support_tickets WHERE code = ?', ctx.params.code);
+  if (!ticket) throw notFound('Support ticket');
+  const nextStatus = data.status || (ticket.status === 'open' ? 'in_progress' : ticket.status);
+  tx(() => {
+    insert('ticket_messages', { seller_id: ticket.seller_id, ticket_id: ticket.id, author_type: 'support', author_name: ctx.user.name, body: data.message, created_at: nowIso() });
+    run('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?', nextStatus, nowIso(), ticket.id);
+    require('../db').notify(ticket.seller_id, 'support', `Reply on ticket ${ticket.code}`, data.message.slice(0, 120), `/seller/support/${ticket.code}`);
+    C.audit(ctx.actor, 'Replied to seller ticket', 'support_ticket', ticket.code, nextStatus);
+  });
+  return { ok: true, status: nextStatus };
+});
+A('GET', '/api/admin/marketplace-settlements', () => ({
+  settlements: all(`SELECT st.*, s.code AS seller_code, s.store_name FROM settlements st JOIN sellers s ON s.id = st.seller_id ORDER BY st.id DESC LIMIT 150`),
+}));
+A('POST', '/api/admin/marketplace-settlements/:code/paid', (ctx) => {
+  const data = validate(ctx.body, { payout_reference: { required: true, min: 4, max: 80 } });
+  const st = get('SELECT * FROM settlements WHERE code = ?', ctx.params.code);
+  if (!st) throw notFound('Settlement');
+  if (st.status === 'paid') throw conflict('Settlement is already marked paid.');
+  tx(() => {
+    run("UPDATE settlements SET status = 'paid', payout_reference = ? WHERE id = ?", data.payout_reference, st.id);
+    require('../db').notify(st.seller_id, 'payment', `Settlement ${st.code} marked paid`, `Reference ${data.payout_reference} · ₹${Number(st.net).toLocaleString('en-IN')}`, '/seller/payments/settlements');
+    C.audit(ctx.actor, 'Recorded seller settlement payout', 'settlement', st.code, data.payout_reference);
+  });
+  return { ok: true };
 });
 
 /* ---------- Test orders (testing environments only) ---------- */

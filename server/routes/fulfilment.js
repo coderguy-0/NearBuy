@@ -5,12 +5,38 @@
 //   * network — the delivery job in the partner network (default, already wired into the delivery engine)
 //   * self    — the shop delivers it, and the customer verifies receipt with their delivery code
 // A pickup order never creates a delivery job; the customer collects it with a collection code.
+const crypto = require('node:crypto');
 const { route } = require('../router');
 const { get, all, run, tx } = require('../db');
-const { conflict, notFound, nowIso, validate, HttpError } = require('../lib');
+const { conflict, notFound, tooMany, nowIso, validate } = require('../lib');
+const deductOrderStock = (...args) => require('./orders').deductOrderStock(...args);
 
 const C = () => require('../delivery/core');
 const E = () => require('../delivery/engine');
+
+const codeMatches = (a, b) => {
+  const x = Buffer.from(String(a || '').trim());
+  const y = Buffer.from(String(b || '').trim());
+  return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+const codeAttempts = new Map();
+function limitOrderCode(key) {
+  const now = Date.now();
+  const list = (codeAttempts.get(key) || []).filter((t) => now - t < 15 * 60 * 1000);
+  if (list.length >= 6) throw tooMany('Too many wrong codes for this order. Wait fifteen minutes or ask the customer to refresh the code.');
+  list.push(now);
+  codeAttempts.set(key, list);
+}
+function verifyOrderCode(order, provided, kind) {
+  if (order.collection_code_expires_at && order.collection_code_expires_at < nowIso()) {
+    throw conflict(`This ${kind} code has expired. Ask the customer to refresh it from My Orders.`);
+  }
+  limitOrderCode(`${kind}:${order.id}`);
+  if (!order.collection_code || !codeMatches(provided, order.collection_code)) {
+    throw conflict(`That ${kind} code does not match this order.`);
+  }
+  codeAttempts.delete(`${kind}:${order.id}`);
+}
 
 function sellerOrder(ctx) {
   const order = get('SELECT * FROM orders WHERE code = ? AND seller_id = ?', ctx.params.code, ctx.sellerId);
@@ -71,11 +97,15 @@ route('POST', '/api/seller/orders/:code/fulfilment', { perm: 'orders.write' }, (
         E().cancelDelivery(delivery, actor, 'The seller chose to deliver this order on their own.');
         delivery = null;
       }
-      run("UPDATE orders SET delivery_mode = 'self', collection_code = COALESCE(collection_code, ?), updated_at = ? WHERE id = ?", C().newCode(4), nowIso(), order.id);
+      const codeExp = new Date(Date.now() + C().CONFIG.codeTtlMs()).toISOString();
+      run("UPDATE orders SET delivery_mode = 'self', collection_code = COALESCE(collection_code, ?), collection_code_expires_at = COALESCE(collection_code_expires_at, ?), updated_at = ? WHERE id = ?", C().newCode(4), codeExp, nowIso(), order.id);
       if (order.customer_order_id) {
         const parent = get('SELECT * FROM customer_orders WHERE id = ?', order.customer_order_id);
-        if (parent) require('./customer').notifyCustomerUser(parent.user_id, 'order', 'Your shop will deliver this order',
-          'The shop is delivering your order directly. The delivery partner network is not involved.', `/customer/#/orders/${parent.code}`);
+        if (parent) {
+          require('./customer').notifyCustomerUser(parent.user_id, 'order', 'Your shop will deliver this order',
+            'The shop is delivering your order directly. Share your 4-digit delivery code on handover.', `/customer/#/orders/${parent.code}`);
+          C().publish(`customer:${parent.user_id}`, { kind: 'order', order_code: parent.code });
+        }
       }
     } else {
       if (!delivery) {
@@ -85,34 +115,48 @@ route('POST', '/api/seller/orders/:code/fulfilment', { perm: 'orders.write' }, (
       run("UPDATE orders SET delivery_mode = 'network', updated_at = ? WHERE id = ?", nowIso(), order.id);
     }
     C().audit(actor, 'Changed delivery method', 'order', order.code, data.mode === 'self' ? 'Seller delivers it themselves' : 'NearBuy partner network');
+    C().publish([`seller:${ctx.sellerId}`, 'admin'], { kind: 'order', code: order.code });
     const fresh = get('SELECT * FROM orders WHERE id = ?', order.id);
     return { ok: true, fulfilment: fulfilmentState(fresh, networkDelivery(order.id)) };
   });
 });
 
+/** Self delivery: seller marks the packed order out for delivery directly. */
+route('POST', '/api/seller/orders/:code/self-dispatch', { perm: 'orders.write' }, (ctx) => tx(() => {
+  const order = sellerOrder(ctx);
+  if (order.fulfilment === 'pickup') throw conflict('This is a store pickup order.');
+  if (order.delivery_mode !== 'self') throw conflict('Switch to self-delivery before dispatching directly.');
+  if (['delivered', 'cancelled', 'shipped'].includes(order.status)) throw conflict(`Order is already ${order.status}.`);
+  if (!['processing', 'packed', 'ready_to_ship'].includes(order.status)) throw conflict('Accept and pack the order before dispatching.');
+  if (order.stock_state === 'reserved') deductOrderStock(ctx.sellerId, order, ctx.user.name);
+  run("UPDATE orders SET status = 'shipped', updated_at = ? WHERE id = ?", nowIso(), order.id);
+  run("INSERT INTO order_events (seller_id, order_id, status, title, note, actor, created_at) VALUES (?, ?, 'shipped', 'Out for delivery (shop staff)', ?, ?, ?)",
+    ctx.sellerId, order.id, 'Seller is delivering this order directly.', ctx.user.name, nowIso());
+  C().notifyCustomerForOrder(order, 'delivery', `Out for delivery: ${order.code}`, 'The shop is on the way with your order. Keep your 4-digit delivery code ready.');
+  C().syncCustomerOrderStatus(order.customer_order_id);
+  C().publish([`seller:${ctx.sellerId}`, 'admin'], { kind: 'order', code: order.code, status: 'shipped' });
+  return { ok: true, message: `Order ${order.code} marked out for delivery.`, order: { code: order.code, status: 'shipped' } };
+}));
+
 /** Store pickup: the customer shows the collection code, the seller hands the package over. */
 route('POST', '/api/seller/orders/:code/collect', { perm: 'orders.write' }, (ctx) => {
   const data = validate(ctx.body, { code: { required: true, min: 4, max: 8, label: 'Collection code' } });
-  const { applyOrderAction } = require('./orders');
   return tx(() => {
     const order = sellerOrder(ctx);
     if (order.fulfilment !== 'pickup') throw conflict('This order is not a store pickup.');
     if (order.status === 'delivered') throw conflict('This order has already been collected.');
     if (order.status === 'cancelled') throw conflict('This order was cancelled.');
     if (!['packed', 'ready_to_ship'].includes(order.status)) throw conflict('Pack the order and mark it ready before handing it over.');
-    if (!order.collection_code || String(data.code).trim() !== String(order.collection_code)) throw conflict('That collection code does not match this order.');
-    const ctx2 = { ...ctx, system: true };
-    // The order has no shipment; the marketplace hand-over completes it directly.
+    verifyOrderCode(order, data.code, 'collection');
+    // Deduct reserved inventory cleanly on pickup handover (if not already deducted).
+    if (order.stock_state === 'reserved') deductOrderStock(ctx.sellerId, order, ctx.user.name);
     run("UPDATE orders SET status = 'delivered', delivered_at = ?, payment_status = CASE WHEN payment_status = 'cod_pending' THEN 'cod_collected' ELSE payment_status END, updated_at = ? WHERE id = ?", nowIso(), nowIso(), order.id);
     run("INSERT INTO order_events (seller_id, order_id, status, title, note, actor, created_at) VALUES (?, ?, 'delivered', 'Collected from the shop', ?, ?, ?)",
       ctx.sellerId, order.id, `Collection code verified at the counter by ${ctx.user.name}.`, ctx.user.name, nowIso());
     require('../ledger').recordSale(ctx.sellerId, { ...order, status: 'delivered' });
-    const parent = order.customer_order_id ? get('SELECT * FROM customer_orders WHERE id = ?', order.customer_order_id) : null;
-    if (parent) {
-      require('./customer').notifyCustomerUser(parent.user_id, 'order', `Collected: ${order.code}`, 'Thanks for collecting your order from the shop.', `/customer/#/orders/${parent.code}`);
-      const open = get('SELECT COUNT(*) AS n FROM orders WHERE customer_order_id = ? AND status != ?', parent.id, 'delivered').n;
-      if (!open) run("UPDATE customer_orders SET status = 'delivered', updated_at = ? WHERE id = ?", nowIso(), parent.id);
-    }
+    C().syncCustomerOrderStatus(order.customer_order_id);
+    C().notifyCustomerForOrder(order, 'order', `Collected: ${order.code}`, 'Thanks for collecting your order from the shop.');
+    C().publish([`seller:${ctx.sellerId}`, 'admin'], { kind: 'order', code: order.code, status: 'delivered' });
     return { ok: true, message: `Order ${order.code} collected.`, order: { code: order.code, status: 'delivered' } };
   });
 });
@@ -127,17 +171,15 @@ route('POST', '/api/seller/orders/:code/self-delivered', { perm: 'orders.write' 
     if (order.status === 'delivered') throw conflict('This order has already been delivered.');
     if (order.status === 'cancelled') throw conflict('This order was cancelled.');
     if (!['shipped', 'ready_to_ship', 'packed'].includes(order.status)) throw conflict('Pack the order and start the delivery before recording the hand-over.');
-    if (!order.collection_code || String(data.code).trim() !== String(order.collection_code)) throw conflict('That delivery code does not match this order.');
+    verifyOrderCode(order, data.code, 'delivery');
+    if (order.stock_state === 'reserved') deductOrderStock(ctx.sellerId, order, ctx.user.name);
     run("UPDATE orders SET status = 'delivered', delivered_at = ?, payment_status = CASE WHEN payment_status = 'cod_pending' THEN 'cod_collected' ELSE payment_status END, updated_at = ? WHERE id = ?", nowIso(), nowIso(), order.id);
     run("INSERT INTO order_events (seller_id, order_id, status, title, note, actor, created_at) VALUES (?, ?, 'delivered', 'Delivered by the shop', ?, ?, ?)",
       ctx.sellerId, order.id, 'Customer confirmed receipt with the delivery code.', ctx.user.name, nowIso());
     require('../ledger').recordSale(ctx.sellerId, { ...order, status: 'delivered' });
-    const parent = order.customer_order_id ? get('SELECT * FROM customer_orders WHERE id = ?', order.customer_order_id) : null;
-    if (parent) {
-      require('./customer').notifyCustomerUser(parent.user_id, 'order', `Delivered: ${order.code}`, 'Your order was delivered by the shop.', `/customer/#/orders/${parent.code}`);
-      const open = get('SELECT COUNT(*) AS n FROM orders WHERE customer_order_id = ? AND status != ?', parent.id, 'delivered').n;
-      if (!open) run("UPDATE customer_orders SET status = 'delivered', updated_at = ? WHERE id = ?", nowIso(), parent.id);
-    }
+    C().syncCustomerOrderStatus(order.customer_order_id);
+    C().notifyCustomerForOrder(order, 'delivery', `Delivered: ${order.code}`, 'Your order was delivered by the shop and verified with your delivery code.');
+    C().publish([`seller:${ctx.sellerId}`, 'admin'], { kind: 'order', code: order.code, status: 'delivered' });
     return { ok: true, message: `Order ${order.code} delivered.`, order: { code: order.code, status: 'delivered' } };
   });
 });

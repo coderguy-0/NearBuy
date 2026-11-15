@@ -28,7 +28,12 @@ function bankView(sellerId) {
   return b ? { holder_name: b.holder_name, bank_name: b.bank_name, account_masked: `•••• •••• ${b.account_last4}`, ifsc: b.ifsc, verification_status: b.verification_status, updated_at: b.updated_at } : null;
 }
 function storeView(seller) {
-  return { store_name: seller.store_name, store_description: seller.store_description || '', contact_email: seller.contact_email || '', contact_phone: seller.contact_phone || '', logo_upload_id: seller.store_logo_upload_id };
+  return {
+    store_name: seller.store_name, store_description: seller.store_description || '', contact_email: seller.contact_email || '',
+    contact_phone: seller.contact_phone || '', logo_upload_id: seller.store_logo_upload_id,
+    is_open: seller.is_open !== 0, operating_hours: seller.operating_hours || '08:00–22:00',
+    service_radius_km: seller.service_radius_km || null,
+  };
 }
 function onboardingState(seller) {
   const sellerId = seller.id;
@@ -134,14 +139,29 @@ route('PUT', '/api/settings/store', { perm: 'settings.manage' }, (ctx) => {
     contact_email: { required: true, format: 'email', lower: true, max: 160, label: 'Contact email' },
     contact_phone: { required: true, format: 'mobile', label: 'Contact phone' },
     logo_upload_id: { type: 'int' },
+    is_open: { type: 'bool' },
+    operating_hours: { max: 80 },
+    service_radius_km: { type: 'number', min: 0.5, max: 15 },
   });
   if (data.logo_upload_id && !get("SELECT 1 FROM uploads WHERE id = ? AND seller_id = ? AND kind = 'logo'", data.logo_upload_id, ctx.sellerId)) throw bad('Please correct the highlighted fields.', { logo_upload_id: 'Upload the logo again.' });
   tx(() => {
-    run('UPDATE sellers SET store_name = ?, store_description = ?, contact_email = ?, contact_phone = ?, store_logo_upload_id = ? WHERE id = ?', data.store_name, data.store_description, data.contact_email, data.contact_phone, data.logo_upload_id || null, ctx.sellerId);
+    const isOpen = data.is_open === undefined ? (ctx.seller.is_open !== 0 ? 1 : 0) : (data.is_open ? 1 : 0);
+    const hours = data.operating_hours !== undefined ? (data.operating_hours || null) : ctx.seller.operating_hours;
+    const radius = data.service_radius_km !== undefined ? data.service_radius_km : ctx.seller.service_radius_km;
+    run('UPDATE sellers SET store_name = ?, store_description = ?, contact_email = ?, contact_phone = ?, store_logo_upload_id = ?, is_open = ?, operating_hours = ?, service_radius_km = ? WHERE id = ?',
+      data.store_name, data.store_description, data.contact_email, data.contact_phone, data.logo_upload_id || null, isOpen, hours, radius, ctx.sellerId);
     markInProgress(ctx);
     logActivity(ctx, 'Updated store profile', 'settings', 'store');
   });
   return { ok: true, store: storeView(get('SELECT * FROM sellers WHERE id = ?', ctx.sellerId)), message: 'Store information saved.' };
+});
+route('PATCH', '/api/settings/store/status', { perm: 'settings.manage' }, (ctx) => {
+  const data = validate(ctx.body, { is_open: { required: true, type: 'bool' }, operating_hours: { max: 80 }, service_radius_km: { type: 'number', min: 0.5, max: 15 } }, { partial: true });
+  const isOpen = data.is_open ? 1 : 0;
+  run('UPDATE sellers SET is_open = ?, operating_hours = COALESCE(?, operating_hours), service_radius_km = COALESCE(?, service_radius_km) WHERE id = ?',
+    isOpen, data.operating_hours || null, data.service_radius_km ?? null, ctx.sellerId);
+  logActivity(ctx, isOpen ? 'Opened shop for orders' : 'Closed shop temporarily', 'settings', 'store');
+  return { ok: true, store: storeView(get('SELECT * FROM sellers WHERE id = ?', ctx.sellerId)), message: isOpen ? 'Your shop is now open for orders.' : 'Your shop is paused and hidden from new orders.' };
 });
 route('PUT', '/api/settings/bank', { perm: 'settings.manage' }, (ctx) => {
   rateLimit(`bank:${ctx.sellerId}`, 10, 3600000);
