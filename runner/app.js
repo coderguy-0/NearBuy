@@ -92,13 +92,15 @@ async function pageLogin() {
   draw();
 }
 function pageRegister() {
-  authPage('Become a delivery partner', 'Deliver food, groceries and parcels in your neighbourhood. Sign up in minutes — go online once your documents are verified.',
+  authPage('Become a delivery partner', 'Deliver groceries, stationery and parcels in your neighbourhood. Only adults aged 18+ may register — go online once your age and documents are verified.',
     h('div', { class: 'card stack' },
       form([
-        { name: 'name', label: 'Full name', required: true, autocomplete: 'name', max: 80 }, { name: 'mobile', label: 'Mobile number', type: 'tel', inputmode: 'numeric', required: true, max: 10, hint: '10-digit Indian mobile number', autocomplete: 'tel-national' },
+        { name: 'name', label: 'Full name', required: true, autocomplete: 'name', max: 80 },
+        { name: 'date_of_birth', label: 'Date of birth (must be 18+)', type: 'date', required: true, hint: 'Verified server-side. NearBuy delivery partners must be at least 18 years old.' },
+        { name: 'mobile', label: 'Mobile number', type: 'tel', inputmode: 'numeric', required: true, max: 10, hint: '10-digit Indian mobile number', autocomplete: 'tel-national' },
         { name: 'email', label: 'Email address', type: 'email', required: true, autocomplete: 'email' }, { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', hint: 'At least 8 characters with an uppercase letter, a lowercase letter and a number.' },
         { name: 'fleet_code', label: 'Fleet code', hint: 'Only if a logistics company asked you to join their fleet.' },
-        { name: 'accept_terms', type: 'checkbox', label: 'I agree to the delivery partner terms and to the use of my location while I am online or on a delivery.' },
+        { name: 'accept_terms', type: 'checkbox', label: 'I confirm I am at least 18 years old and agree to the delivery partner terms and to the use of my location while I am online or on a delivery.' },
       ], { submit: 'Create partner account', onSubmit: async (v) => { await api('/api/partners/applications', { method: 'POST', body: v }); await enter(); } }),
       h('p', { class: 'small' }, 'Already registered? ', h('a', { href: '#/login' }, 'Sign in'))),
     h('div', { class: 'grid g3 collapse' }, [['Package', 'Pick up from shops'], ['Route', 'Deliver in your zone'], ['Wallet', 'Get paid weekly']].map(([t, d]) => h('div', { class: 'card flat stack tight', style: 'padding:14px' }, h('strong', null, t), h('div', { class: 'small muted' }, d)))));
@@ -173,6 +175,7 @@ function pageApplication() {
         h('div', { class: 'small strong' }, c.label)))),
       card(head('account', 1), verifyBlock('mobile', 'Mobile', u.mobile_verified, u.mobile), verifyBlock('email', 'Email', u.email_verified, u.email)),
       card(head('profile', 2), form([
+        { name: 'date_of_birth', label: 'Date of birth (18+ required)', type: 'date', required: true, value: p.date_of_birth || '', hint: p.age ? `Verified age: ${p.age} years` : 'Required before submitting your application.' },
         { name: 'city', label: 'City', required: true, value: p.city, max: 60 },
         { name: 'home_zone_id', label: 'Preferred operating zone', type: 'select', required: true, value: p.home_zone_id, options: [['', 'Choose a zone'], ...S.config.zones.map((z) => [z.id, `${z.name}, ${z.city}${z.status === 'active' ? '' : ' (not open yet)'}`])] },
         { name: 'language', label: 'Language', type: 'select', required: true, value: p.language || 'Hindi', options: S.config.languages },

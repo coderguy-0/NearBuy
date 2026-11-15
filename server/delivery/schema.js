@@ -1,7 +1,7 @@
 'use strict';
 // Delivery network schema. One set of tables serves food, grocery and parcel deliveries; every portal reads and writes
 // these same records (and the existing users / sessions / orders / order_items / returns tables).
-const { db } = require('../db');
+const { db, all, run } = require('../db');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS user_roles (
@@ -171,8 +171,36 @@ CREATE INDEX IF NOT EXISTS idx_dnotif ON delivery_notifications (audience, partn
 CREATE INDEX IF NOT EXISTS idx_audit ON audit_logs (created_at);
 `);
 
+function addColumn(table, column, definition) {
+  if (!all(`PRAGMA table_info(${table})`).some((c) => c.name === column)) {
+    run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+addColumn('delivery_partners', 'date_of_birth', 'TEXT');
+addColumn('deliveries', 'pickup_code_expires_at', 'TEXT');
+addColumn('deliveries', 'drop_code_expires_at', 'TEXT');
+addColumn('sellers', 'is_open', 'INTEGER NOT NULL DEFAULT 1');
+addColumn('sellers', 'operating_hours', 'TEXT');
+addColumn('sellers', 'service_radius_km', 'REAL');
+addColumn('users', 'suspended_at', 'TEXT');
+addColumn('users', 'suspend_reason', 'TEXT');
+
+/** Compute completed age in years from an ISO date string (YYYY-MM-DD). Returns null when invalid. */
+function computeAge(dob, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dob || ''))) return null;
+  const [y, m, d] = String(dob).split('-').map(Number);
+  const birth = new Date(Date.UTC(y, m - 1, d));
+  if (birth.getUTCFullYear() !== y || birth.getUTCMonth() !== m - 1 || birth.getUTCDate() !== d) return null;
+  if (birth.getTime() > now.getTime()) return null;
+  let age = now.getUTCFullYear() - y;
+  const monthDiff = (now.getUTCMonth() + 1) - m;
+  if (monthDiff < 0 || (monthDiff === 0 && now.getUTCDate() < d)) age -= 1;
+  return age;
+}
+
 const CATEGORIES = { food: 'Food', grocery: 'Grocery & essentials', ecommerce: 'Parcel' };
 const VEHICLES = {
+  walking: { label: 'Walking (on foot)', speed_kmh: 5, max_kg: 3, max_km: 1.5, needs_licence: false },
   bicycle: { label: 'Bicycle', speed_kmh: 12, max_kg: 8, max_km: 5, needs_licence: false },
   ev_two_wheeler: { label: 'Electric two-wheeler', speed_kmh: 20, max_kg: 20, max_km: 12, needs_licence: false },
   two_wheeler: { label: 'Two-wheeler', speed_kmh: 22, max_kg: 20, max_km: 15, needs_licence: true },
@@ -216,5 +244,5 @@ const COMPLAINT_CATEGORIES = {
 
 module.exports = {
   CATEGORIES, VEHICLES, APPLICATION_STATUS, DELIVERY_STATUS, UNASSIGNED, BEFORE_PICKUP, AFTER_PICKUP, ACTIVE, FINAL, DOCUMENT_KINDS, TRAINING_MODULES,
-  PARTNER_TICKET_CATEGORIES, COMPLAINT_CATEGORIES,
+  PARTNER_TICKET_CATEGORIES, COMPLAINT_CATEGORIES, computeAge,
 };

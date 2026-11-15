@@ -25,6 +25,8 @@ const DEFAULT_PREP = { food: 15, grocery: 10, ecommerce: 20 };
 
 /** Can the network deliver from this seller to this address? Returns the reason when it cannot. */
 function serviceability(sellerId, address, pincode) {
+  const seller = get('SELECT is_open, service_radius_km FROM sellers WHERE id = ?', sellerId);
+  if (seller && seller.is_open === 0) return { ok: false, reason: 'This shop is currently closed for orders.' };
   const pickup = get('SELECT * FROM seller_pickup_locations WHERE seller_id = ? ORDER BY is_default DESC, id LIMIT 1', sellerId);
   if (!pickup) return { ok: false, reason: 'The seller has no pickup location.' };
   const from = C.geocode(pickup.address, pickup.pincode);
@@ -36,7 +38,8 @@ function serviceability(sellerId, address, pincode) {
   if (zone.status !== 'active') return { ok: false, reason: `Delivery in ${zone.name} is temporarily suspended${zone.status_note ? `: ${zone.status_note}` : '.'}` };
   if (!C.zoneOpenNow(zone)) return { ok: false, reason: `${zone.name} delivers between ${zone.open_time} and ${zone.close_time}.` };
   const distance = C.roadKm(from.lat, from.lng, to.lat, to.lng);
-  if (distance > zone.max_delivery_km) return { ok: false, reason: `The address is ${distance} km from the pickup point; ${zone.name} delivers up to ${zone.max_delivery_km} km.` };
+  const maxKm = seller && seller.service_radius_km ? Math.min(Number(seller.service_radius_km), zone.max_delivery_km) : zone.max_delivery_km;
+  if (distance > maxKm) return { ok: false, reason: `The address is ${distance} km from the pickup point; this shop delivers up to ${maxKm} km.` };
   const open = get(`SELECT COUNT(*) AS n FROM deliveries WHERE zone_id = ? AND status NOT IN ('delivered','returned_to_seller','cancelled')`, zone.id).n;
   if (open >= zone.capacity_limit) return { ok: false, reason: `${zone.name} has reached its capacity of ${zone.capacity_limit} open deliveries.` };
   return { ok: true, zone, pickup, from, to, distance };
@@ -63,6 +66,7 @@ function ensureDelivery(order, { strict = false } = {}) {
   const cod = order.payment_method === 'Cash on delivery';
   const prep = DEFAULT_PREP[category];
   const at = nowIso();
+  const codeExpiresAt = new Date(Date.now() + C.CONFIG.codeTtlMs()).toISOString();
   const id = insert('deliveries', {
     code: nextCode('DLV', 30000), kind: 'forward', order_id: order.id, seller_id: order.seller_id, zone_id: svc.zone.id, category,
     package_type: PACKAGE_TYPE[category], package_count: category === 'grocery' ? Math.max(1, Math.ceil(units / 5)) : 1, weight_g: Math.round(weight),
@@ -72,7 +76,8 @@ function ensureDelivery(order, { strict = false } = {}) {
     drop_name: order.customer_name, drop_phone: order.customer_phone, drop_address: `${order.ship_address}, ${order.ship_city} ${order.ship_pincode}`,
     drop_area: svc.to.area, drop_lat: svc.to.lat, drop_lng: svc.to.lng, drop_instructions: prefs.instructions || null, geo_source: svc.to.source,
     distance_km: svc.distance, prep_minutes: prep, expected_ready_at: new Date(Date.now() + prep * 60000).toISOString(),
-    pickup_code: C.newCode(4), drop_code: C.newCode(4), track_token: randomToken(18), payment_type: cod ? 'cod' : 'prepaid', cod_amount: cod ? order.total : 0,
+    pickup_code: C.newCode(4), drop_code: C.newCode(4), pickup_code_expires_at: codeExpiresAt, drop_code_expires_at: codeExpiresAt,
+    track_token: randomToken(18), payment_type: cod ? 'cod' : 'prepaid', cod_amount: cod ? order.total : 0,
     customer_fee: order.shipping_charge, fee_breakdown: fee, partner_earning: earning.total, earning_breakdown: earning,
     is_demo: order.is_demo, created_at: at, updated_at: at,
   });
@@ -110,6 +115,7 @@ function cashInHand(partnerId) {
 function ineligibility(partner, d, { manual = false } = {}) {
   const reasons = [];
   if (partner.status !== 'approved') reasons.push(`Account is ${S.APPLICATION_STATUS[partner.status].toLowerCase()}`);
+  if (!partner.date_of_birth || S.computeAge(partner.date_of_birth) < 18) reasons.push('Does not meet 18+ eligibility requirement');
   if (partner.fleet_hold) reasons.push('On hold by fleet manager');
   if (!partner.online) reasons.push('Offline');
   if (!get('SELECT 1 FROM partner_zones WHERE partner_id = ? AND zone_id = ?', partner.id, d.zone_id)) reasons.push('Does not operate in this zone');
@@ -218,6 +224,7 @@ function offerFailed(offer, status, note, reason) {
   if (d.status !== 'offer_sent') return d;
   const failed = d.failed_assignments + 1;
   d = C.setStatus(d, 'searching_partner', status === 'declined' ? { type: 'partner', name: note.by } : C.SYSTEM, note.text, { failed_assignments: failed });
+  C.notifySeller(d, status === 'declined' ? `Runner declined offer for ${d.code}` : `Runner offer expired for ${d.code}`, 'Looking for another eligible partner — you can appoint another runner or deliver yourself.');
   if (failed === 3) C.notifyAdmin('repeated_failed_assignment', `Repeated failed assignment: ${d.code}`, 'Three offers were declined or timed out. Consider assigning a partner manually.', d.id);
   return offerNext(d);
 }
@@ -362,6 +369,7 @@ function verifyPickup(partner, code, body) {
     const method = body.method === 'qr' ? 'qr' : 'pin';
     const count = Number(body.package_count);
     if (!Number.isInteger(count) || count < 1) throw bad('Count the packages you were given.', { package_count: 'Enter the number of packages.' });
+    if (d.pickup_code_expires_at && d.pickup_code_expires_at < nowIso()) throw conflict('The pickup PIN has expired. Ask the seller to generate a fresh PIN.');
     limitAttempts(`pickup:${d.id}`);
     if (!codeMatches(body.code, d.pickup_code)) throw bad(method === 'qr' ? 'That QR code does not belong to this order.' : 'That pickup PIN is not correct.', { code: 'Incorrect code.' });
     if (count !== d.package_count) throw bad(`The package count does not match this order (${d.package_count} expected). Check with the ${d.kind === 'return' ? 'customer' : 'seller'} before leaving.`, { package_count: 'Count does not match.' });
@@ -424,6 +432,8 @@ function submitProof(partner, code, body, file) {
     if (!proofStage(d)) throw conflict('Delivery proof can be submitted after you have arrived at the destination.');
     const method = String(body.method || '');
     if (method === 'otp' || method === 'qr') {
+      const expField = (d.kind === 'forward' && d.status === 'return_in_progress') ? d.pickup_code_expires_at : d.drop_code_expires_at;
+      if (expField && expField < nowIso()) throw conflict('This verification code has expired. Ask the recipient to generate a fresh code.');
       limitAttempts(`drop:${d.id}`);
       if (!codeMatches(body.code, receiverCode(d))) throw bad(method === 'qr' ? 'That QR code does not belong to this delivery.' : 'That delivery code is not correct.', { code: 'Incorrect code.' });
       attempts.delete(`drop:${d.id}`);
@@ -482,6 +492,8 @@ function complete(partner, code, body) {
     d = C.setStatus(d, 'delivered', actor, `Delivered. Verified by ${proof.method === 'otp' ? 'customer code' : proof.method === 'qr' ? 'QR code' : proof.method === 'photo' ? 'photo (contactless)' : proof.method === 'recipient' ? 'customer confirmation' : 'authorised alternative recipient'}.`, { completed_at: nowIso() });
     endAssignment(d, 'Delivered');
     orderAction(d, 'deliver');
+    const ord = get('SELECT customer_order_id FROM orders WHERE id = ?', d.order_id);
+    if (ord && ord.customer_order_id) C.syncCustomerOrderStatus(ord.customer_order_id);
     // Delivery completion and money are separate records: earnings of a cash order stay pending until the cash is deposited.
     postEarnings(d, partner.id, cod);
     insert('settlement_records', { delivery_id: d.id, customer_fee: d.customer_fee, partner_earning: d.partner_earning, cod_amount: d.cod_amount, cod_state: cod ? 'collected' : 'not_applicable', created_at: nowIso() });
@@ -527,6 +539,22 @@ function customerConfirm(d) {
     C.publish(C.deliveryTopics(d), { kind: 'delivery', code: d.code, status: d.status });
     return d;
   });
+}
+function refreshDeliveryCode(d, which, actor) {
+  if (S.FINAL.includes(d.status)) throw conflict('Cannot refresh code for a closed delivery.');
+  const code = C.newCode(4);
+  const exp = new Date(Date.now() + C.CONFIG.codeTtlMs()).toISOString();
+  if (which === 'pickup') {
+    if (S.AFTER_PICKUP.includes(d.status)) throw conflict('Pickup is already completed.');
+    run('UPDATE deliveries SET pickup_code = ?, pickup_code_expires_at = ?, updated_at = ? WHERE id = ?', code, exp, nowIso(), d.id);
+    attempts.delete(`pickup:${d.id}`);
+  } else {
+    run('UPDATE deliveries SET drop_code = ?, drop_code_expires_at = ?, updated_at = ? WHERE id = ?', code, exp, nowIso(), d.id);
+    attempts.delete(`drop:${d.id}`);
+  }
+  C.audit(actor, `Refreshed ${which} verification code`, 'delivery', d.code);
+  C.publish(C.deliveryTopics(d), { kind: 'delivery', code: d.code, status: d.status });
+  return { code, expires_at: exp };
 }
 function recordLocation(partner, body, delivery) {
   const lat = Number(body.lat); const lng = Number(body.lng);
@@ -623,6 +651,6 @@ module.exports = {
   one, own, partnerById, vehicleOf, activeTask, serviceability, ensureDelivery, onOrderChanged, hasNetworkDelivery, orderAction, cashInHand, ineligibility,
   candidates, dueForSearch, startSearch, offerNext, offerTo, acceptOffer, declineOffer, cancelLiveOffers, manualAssign, assignTo, endAssignment, unassign, cancelDelivery, markReady,
   startTrip, arrivedAtPickup, verifyPickup, hasPickupConfirmation, pickedUp, arrivedAtDestination, submitProof, validProof, complete, failAttempt,
-  resolveFailed, customerConfirm, recordLocation, setOnline, reconcile, allocateDeposits, settleCollection, postEarnings, addProof, receiverCode,
+  resolveFailed, customerConfirm, refreshDeliveryCode, recordLocation, setOnline, reconcile, allocateDeposits, settleCollection, postEarnings, addProof, receiverCode,
   tick, housekeeping, startBackground, COD_CASH_LIMIT, PACKAGE_TYPE, DEFAULT_PREP,
 };

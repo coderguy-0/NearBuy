@@ -13,10 +13,10 @@ const DEMO = {
   admin: { email: 'tower@nearbuy.demo', password: 'Tower123!', name: 'Nisha Kapoor' },
   fleet: { email: 'fleet@nearbuy.demo', password: 'Fleet123!', name: 'Arjun Mehta', fleet: 'SwiftWheels Logistics' },
   partners: [
-    { email: 'rohan@nearbuy.demo', password: 'Runner123!', name: 'Rohan Kumar', mobile: '9810011101', vehicle: 'two_wheeler', reg: 'DL3SAB1234', status: 'approved' },
-    { email: 'meena@nearbuy.demo', password: 'Runner123!', name: 'Meena Joshi', mobile: '9810011102', vehicle: 'bicycle', status: 'approved', fleet: true },
-    { email: 'farhan@nearbuy.demo', password: 'Runner123!', name: 'Farhan Ali', mobile: '9810011103', vehicle: 'ev_two_wheeler', reg: 'DL9EVC4521', status: 'approved', fleet: true },
-    { email: 'priya@nearbuy.demo', password: 'Runner123!', name: 'Priya Nair', mobile: '9810011104', vehicle: 'two_wheeler', reg: 'DL5SCD7788', status: 'submitted' },
+    { email: 'rohan@nearbuy.demo', password: 'Runner123!', name: 'Rohan Kumar', mobile: '9810011101', dob: '1995-05-14', vehicle: 'two_wheeler', reg: 'DL3SAB1234', status: 'approved' },
+    { email: 'meena@nearbuy.demo', password: 'Runner123!', name: 'Meena Joshi', mobile: '9810011102', dob: '1997-08-22', vehicle: 'bicycle', status: 'approved', fleet: true },
+    { email: 'farhan@nearbuy.demo', password: 'Runner123!', name: 'Farhan Ali', mobile: '9810011103', dob: '1994-11-03', vehicle: 'ev_two_wheeler', reg: 'DL9EVC4521', status: 'approved', fleet: true },
+    { email: 'priya@nearbuy.demo', password: 'Runner123!', name: 'Priya Nair', mobile: '9810011104', dob: '1998-03-19', vehicle: 'two_wheeler', reg: 'DL5SCD7788', status: 'submitted' },
   ],
 };
 const PINS = [
@@ -45,7 +45,7 @@ function createPartner(p, zoneId, fleetId) {
   const training = Object.fromEntries(S.TRAINING_MODULES.map(([k]) => [k, nowIso()]));
   const id = insert('delivery_partners', {
     code: nextCode('DP', 2000), user_id: userId, fleet_id: p.fleet ? fleetId : null, status: p.status, status_note: approved ? 'DEMO DATA: created as approved. No real verification was performed.' : null,
-    mobile_verified_at: nowIso(), city: 'New Delhi', home_zone_id: zoneId, language: 'Hindi', emergency_name: 'Demo Contact', emergency_phone: '9810099900',
+    mobile_verified_at: nowIso(), date_of_birth: p.dob || '1996-01-15', city: 'New Delhi', home_zone_id: zoneId, language: 'Hindi', emergency_name: 'Demo Contact', emergency_phone: '9810099900',
     payout_holder: p.name, payout_bank: 'Demo Bank of India', payout_account_enc: encrypt('000098765432'), payout_last4: '5432', payout_ifsc: 'DEMO0000001', payout_status: approved ? 'verified' : 'unverified',
     training: JSON.stringify(training), training_completed_at: nowIso(), submitted_at: nowIso(), approved_at: approved ? nowIso() : null, is_demo: 1, created_at: nowIso(), updated_at: nowIso(),
   });

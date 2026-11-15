@@ -32,14 +32,22 @@ function requiredDocuments(vehicle) {
   if (vehicle && S.VEHICLES[vehicle.type] && S.VEHICLES[vehicle.type].needs_licence) kinds.push('licence', 'vehicle');
   return kinds;
 }
+function adultCheck(dob) {
+  const age = S.computeAge(dob);
+  if (age === null) return 'Enter a valid date of birth (YYYY-MM-DD).';
+  if (age < 18) return 'Delivery partners must be at least 18 years old.';
+  if (age > 85) return 'Enter a valid date of birth.';
+  return null;
+}
 function checklist(partner, user) {
   const vehicle = E.vehicleOf(partner.id);
   const docs = all('SELECT kind, status FROM partner_documents WHERE partner_id = ?', partner.id);
   const training = parseJson(partner.training, {});
   const missingDocs = requiredDocuments(vehicle).filter((k) => !docs.some((d) => d.kind === k && d.status !== 'rejected'));
+  const adultOk = Boolean(partner.date_of_birth && S.computeAge(partner.date_of_birth) >= 18);
   return [
     { key: 'account', label: 'Account and verification', done: Boolean(partner.mobile_verified_at && user.email_verified_at), hint: !partner.mobile_verified_at ? 'Verify your mobile number' : !user.email_verified_at ? 'Verify your email address' : null },
-    { key: 'profile', label: 'Basic profile', done: Boolean(partner.city && partner.home_zone_id && partner.language && partner.emergency_name && partner.emergency_phone), hint: 'City, operating zone, language and emergency contact' },
+    { key: 'profile', label: 'Basic profile and age (18+)', done: Boolean(adultOk && partner.city && partner.home_zone_id && partner.language && partner.emergency_name && partner.emergency_phone), hint: !adultOk ? 'Enter your date of birth (must be 18 or older)' : 'City, operating zone, language and emergency contact' },
     { key: 'vehicle', label: 'Vehicle details', done: Boolean(vehicle), hint: 'Choose the vehicle you will deliver with' },
     { key: 'documents', label: 'Identity and eligibility documents', done: Boolean(vehicle) && !missingDocs.length && partner.payout_status !== 'missing', hint: missingDocs.length ? `Upload: ${missingDocs.map((k) => S.DOCUMENT_KINDS[k].toLowerCase()).join(', ')}` : partner.payout_status === 'missing' ? 'Add your payout account' : null },
     { key: 'training', label: 'Training and policy acknowledgement', done: S.TRAINING_MODULES.every(([k]) => training[k]), hint: `${S.TRAINING_MODULES.filter(([k]) => training[k]).length} of ${S.TRAINING_MODULES.length} modules acknowledged` },
@@ -48,6 +56,7 @@ function checklist(partner, user) {
 function onlineBlockers(partner) {
   const reasons = [];
   if (partner.status !== 'approved') reasons.push(`Your application is ${S.APPLICATION_STATUS[partner.status].toLowerCase()}.`);
+  if (!partner.date_of_birth || S.computeAge(partner.date_of_birth) < 18) reasons.push('Verified age of 18+ is required to deliver.');
   if (partner.fleet_hold) reasons.push('Your fleet manager has put your account on hold.');
   if (!E.vehicleOf(partner.id)) reasons.push('Add a vehicle.');
   const zones = all("SELECT z.* FROM service_zones z JOIN partner_zones pz ON pz.zone_id = z.id WHERE pz.partner_id = ?", partner.id);
@@ -62,7 +71,9 @@ function profile(ctx) {
   return {
     user: { name: ctx.user.name, mobile: ctx.user.mobile, email: ctx.user.email, email_verified: Boolean(ctx.user.email_verified_at), mobile_verified: Boolean(p.mobile_verified_at) },
     partner: {
-      code: p.code, status: p.status, status_label: S.APPLICATION_STATUS[p.status], status_note: p.status_note, city: p.city, home_zone_id: p.home_zone_id, language: p.language,
+      code: p.code, status: p.status, status_label: S.APPLICATION_STATUS[p.status], status_note: p.status_note,
+      date_of_birth: p.date_of_birth || null, age: p.date_of_birth ? S.computeAge(p.date_of_birth) : null,
+      city: p.city, home_zone_id: p.home_zone_id, language: p.language,
       emergency_name: p.emergency_name, emergency_phone: p.emergency_phone, categories: parseJson(p.categories, []), online: Boolean(p.online), online_since: p.online_since,
       fleet, fleet_hold: Boolean(p.fleet_hold), payout: p.payout_status === 'missing' ? null : { holder: p.payout_holder, bank: p.payout_bank, account_ending: p.payout_last4, ifsc: p.payout_ifsc, status: p.payout_status },
       training: parseJson(p.training, {}), rating: p.rating_count ? r2(p.rating_sum / p.rating_count) : null, rating_count: p.rating_count,
@@ -90,11 +101,16 @@ route('POST', '/api/partners/applications', { auth: 'public' }, (ctx) => {
   const data = validate(ctx.body, {
     name: { required: true, min: 2, max: 80, label: 'Full name' }, mobile: { required: true, format: 'mobile', label: 'Mobile number' },
     email: { required: true, format: 'email', lower: true, max: 160, label: 'Email address' }, password: { required: true, max: 128 },
+    date_of_birth: { format: 'date', label: 'Date of birth' },
     fleet_code: { max: 40, upper: true }, accept_terms: { type: 'bool', mustBeTrue: true, message: 'Accept the delivery partner terms to continue.' },
   });
   const fields = {};
   const problem = passwordProblems(data.password);
   if (problem) fields.password = problem;
+  if (data.date_of_birth) {
+    const dobProblem = adultCheck(data.date_of_birth);
+    if (dobProblem) fields.date_of_birth = dobProblem;
+  }
   if (get('SELECT 1 FROM users WHERE email = ?', data.email)) fields.email = 'An account with this email already exists. Sign in instead.';
   if (get("SELECT 1 FROM users u JOIN user_roles r ON r.user_id = u.id AND r.role = 'partner' WHERE u.mobile = ?", data.mobile)) fields.mobile = 'A delivery partner account with this mobile number already exists.';
   const fleet = data.fleet_code ? get("SELECT * FROM fleets WHERE join_code = ? AND status = 'active'", data.fleet_code) : null;
@@ -104,7 +120,7 @@ route('POST', '/api/partners/applications', { auth: 'public' }, (ctx) => {
     const userId = insert('users', { email: data.email, password_hash: hashPassword(data.password), name: data.name, mobile: data.mobile, created_at: nowIso() });
     insert('user_roles', { user_id: userId, role: 'partner', created_at: nowIso() });
     const code = nextCode('DP', 2000);
-    const partnerId = insert('delivery_partners', { code, user_id: userId, fleet_id: fleet ? fleet.id : null, status: 'draft', created_at: nowIso(), updated_at: nowIso() });
+    const partnerId = insert('delivery_partners', { code, user_id: userId, fleet_id: fleet ? fleet.id : null, date_of_birth: data.date_of_birth || null, status: 'draft', created_at: nowIso(), updated_at: nowIso() });
     logApplication(partnerId, 'draft', 'Account created.');
     C.audit({ type: 'partner', name: data.name, userId, ip: ctx.ip }, 'Created partner account', 'partner', code);
     return { userId, code };
@@ -188,17 +204,23 @@ P('POST', '/api/partners/verify/:channel/confirm', (ctx) => {
 P('PATCH', '/api/partners/profile', (ctx) => {
   const p = ctx.partner;
   const data = validate(ctx.body, {
+    date_of_birth: { format: 'date', label: 'Date of birth' },
     city: { min: 2, max: 60 }, home_zone_id: { type: 'int' }, zone_ids: { type: 'array', of: 'int', max: 10 }, language: { enum: LANGUAGES },
     emergency_name: { min: 2, max: 80, label: 'Emergency contact name' }, emergency_phone: { format: 'mobile', label: 'Emergency contact number' },
     categories: { type: 'array', of: 'string', max: 3 },
   }, { partial: true });
+  if (data.date_of_birth) {
+    if (!EDITABLE.includes(p.status) && p.date_of_birth) throw conflict('Date of birth cannot be changed after approval. Contact support.');
+    const dobProblem = adultCheck(data.date_of_birth);
+    if (dobProblem) throw bad('Please correct the highlighted fields.', { date_of_birth: dobProblem });
+  }
   if (data.emergency_phone && data.emergency_phone === ctx.user.mobile) throw bad('Please correct the highlighted fields.', { emergency_phone: 'Give a different number from your own.' });
   if (data.categories && (!data.categories.length || data.categories.some((c) => !S.CATEGORIES[c]))) throw bad('Please correct the highlighted fields.', { categories: 'Choose at least one delivery category.' });
   const zoneIds = data.zone_ids || (data.home_zone_id ? [data.home_zone_id] : null);
   if (data.home_zone_id && !get('SELECT 1 FROM service_zones WHERE id = ?', data.home_zone_id)) throw bad('Please correct the highlighted fields.', { home_zone_id: 'Choose a zone from the list.' });
   tx(() => {
     const patch = { updated_at: nowIso() };
-    for (const key of ['city', 'home_zone_id', 'language', 'emergency_name', 'emergency_phone']) if (data[key] !== undefined && data[key] !== null) patch[key] = data[key];
+    for (const key of ['date_of_birth', 'city', 'home_zone_id', 'language', 'emergency_name', 'emergency_phone']) if (data[key] !== undefined && data[key] !== null) patch[key] = data[key];
     if (data.categories) patch.categories = JSON.stringify(data.categories);
     run(`UPDATE delivery_partners SET ${Object.keys(patch).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`, ...Object.values(patch), p.id);
     if (zoneIds) {

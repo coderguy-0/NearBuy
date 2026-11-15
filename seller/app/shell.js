@@ -121,12 +121,27 @@ export function buildShell() {
     }
   }
   async function refreshUnread() { try { const me2 = await refreshMe(); if (me2) setUnread(me2.unread_notifications || 0); } catch { /* shown on next navigation */ } }
-  return { root: app, content, setActive, setUnread, refreshUnread, searchInput };
+  let liveEs = null;
+  try {
+    liveEs = new EventSource('/api/realtime?portal=seller');
+    liveEs.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data || '{}');
+        if (msg.kind === 'ping') return;
+        refreshUnread();
+        if (msg.kind === 'order' && msg.status === 'new') toast(`New customer order ${msg.code || ''} arrived!`, 'success', 5500);
+        else if (msg.kind === 'return') toast(`New customer return request ${msg.code || ''} received.`, 'info', 5500);
+        else if (msg.kind === 'notification') toast('Delivery update received.', 'info', 4000);
+      } catch {}
+    };
+  } catch {}
+  return { root: app, content, setActive, setUnread, refreshUnread, searchInput, closeLive: () => { if (liveEs) { liveEs.close(); liveEs = null; } } };
 }
 const NOTIF_ICON = { order: 'cart', inventory: 'layers', payment: 'wallet', return: 'undo', support: 'lifebuoy', listing: 'box', shipping: 'truck', account: 'shield', security: 'lock' };
 export { NOTIF_ICON };
 
 export async function signOut() {
+  if (state.shell && state.shell.closeLive) state.shell.closeLive();
   try { await api('/auth/logout', { method: 'POST', body: {} }); } catch (err) { toast(err.message, 'error'); return; }
   state.me = null; state.shell = null;
   navigate('/seller/login', { replace: true });

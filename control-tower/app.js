@@ -4,9 +4,10 @@ import { h, mount, api, act, money, dt, day, clock, ago, pct, val, title, badge,
 const root = document.getElementById('app');
 const S = { me: null, refresh: null, publicConfig: null };
 const NAV = [
-  { group: 'Operate', items: [['/', 'Dashboard', 'dashboard'], ['/map', 'Live map', 'map'], ['/deliveries', 'Deliveries', 'deliveries'], ['/partners', 'Partners', 'partners']] },
+  { group: 'Operate', items: [['/', 'Dashboard', 'dashboard'], ['/map', 'Live map', 'map'], ['/deliveries', 'Deliveries', 'deliveries'], ['/partners', 'Partners (18+)', 'partners']] },
+  { group: 'Marketplace', items: [['/sellers', 'Shops & sellers', 'zones'], ['/listings', 'Listings review', 'deliveries'], ['/customers', 'Customers', 'partners'], ['/orders', 'All orders', 'deliveries'], ['/disputes', 'Disputes & tickets', 'support']] },
   { group: 'Network', items: [['/zones', 'Zones & pricing', 'zones'], ['/fleets', 'Fleets', 'fleets']] },
-  { group: 'Business', items: [['/finance', 'Finance', 'finance'], ['/support', 'Support', 'support'], ['/reports', 'Reports', 'reports'], ['/audit', 'Audit log', 'audit']] },
+  { group: 'Business', items: [['/finance', 'Finance', 'finance'], ['/support', 'Delivery support', 'support'], ['/reports', 'Reports', 'reports'], ['/audit', 'Audit log', 'audit']] },
 ];
 const qs = (o) => { const p = new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '')); const s = p.toString(); return s ? `?${s}` : ''; };
 
@@ -71,11 +72,19 @@ function pageDashboard(silent) {
       stat('Failed attempts today', d.today.failed_attempts), stat('Delivery fees today', money(d.today.fee_revenue), 'Revenue on completed deliveries')),
     h('div', { class: 'grid g4' }, stat('Average delivery time', val(d.week.average_delivery_minutes, ' min'), 'Last 7 days, ready to delivered'), stat('Success rate', pct(d.week.success_rate), `${d.week.closed} closed in 7 days`),
       stat('Open settlements', d.settlements.open, `${money(d.settlements.partner_earnings_unsettled)} partner earnings`), stat('Cash with partners', money(d.settlements.cod_with_partners), 'To reconcile', d.settlements.cod_with_partners ? 'yellow' : '')),
+    d.marketplace ? h('div', { class: 'grid g4' },
+      stat('Approved shops', d.marketplace.sellers_approved, `${d.marketplace.sellers_pending} pending review`),
+      stat('Live listings', d.marketplace.listings_active, `${d.marketplace.listings_pending} pending review`, d.marketplace.listings_pending ? 'tinted' : ''),
+      stat('Customers', d.marketplace.customers, `${d.marketplace.customer_orders_today} orders today`),
+      stat('Open returns & tickets', d.marketplace.open_returns + d.marketplace.open_seller_tickets, `${d.marketplace.open_returns} returns · ${d.marketplace.open_seller_tickets} seller tickets`)) : null,
     h('div', { class: 'card flat row', style: 'padding:12px 14px' },
       h('span', { class: 'small muted strong' }, 'Quick actions'),
       h('a', { class: 'btn sm', href: '#/deliveries?tab=unassigned' }, icon('deliveries', 'sm'), 'Unassigned deliveries'),
       h('a', { class: 'btn sm', href: '#/partners?tab=applications' }, icon('partners', 'sm'), 'Partner applications'),
-      h('a', { class: 'btn sm', href: '#/support' }, icon('support', 'sm'), `Open tickets (${d.open_tickets})`),
+      h('a', { class: 'btn sm', href: '#/sellers' }, 'Shops & sellers'),
+      h('a', { class: 'btn sm', href: '#/listings' }, 'Listings review'),
+      h('a', { class: 'btn sm', href: '#/disputes' }, 'Disputes'),
+      h('a', { class: 'btn sm', href: '#/support' }, icon('support', 'sm'), `Delivery tickets (${d.open_tickets})`),
       d.open_incidents ? h('a', { class: 'btn sm danger', href: '#/support?view=incidents' }, icon('alert', 'sm'), `Open incidents (${d.open_incidents})`) : null),
     card(h('div', { class: 'row between' }, h('h2', null, 'Alerts'), S.me.unread ? btn('Mark all read', async (b) => { await act(b, () => api('/api/admin/notifications/read', { method: 'POST' })); S.me.unread = 0; pageDashboard(true); }, 'sm') : null),
       d.alerts.length ? h('ol', { class: 'tl' }, d.alerts.map((n) => h('li', { class: n.read_at ? '' : 'done' }, h('div', { class: 't1' }, n.delivery_code ? h('a', { href: `#/deliveries/${n.delivery_code}` }, n.title) : n.title, n.read_at ? null : [' ', badge('New', 'info')]), h('div', { class: 't2' }, [ago(n.created_at), n.body].filter(Boolean).join(' · '))))) : empty('No alerts.', 'bell'))), silent);
@@ -106,7 +115,7 @@ function testOrderModal(done) {
       { name: 'method', label: 'Delivery method', type: 'select', options: [['immediate', 'Immediate'], ['scheduled', 'Scheduled slot']] }, { name: 'scheduled_for', label: 'Scheduled for', type: 'datetime-local', hint: 'Only for a scheduled delivery.' },
       { name: 'address', label: 'Delivery address', hint: `Leave empty to use a sample address. Serviceable PIN codes come from the zone, e.g. ${o.sample_addresses.slice(0, 3).map((a) => a.pincode).join(', ')}.` }, { name: 'pincode', label: 'PIN code', max: 6, inputmode: 'numeric' },
       { name: 'special_handling', type: 'checkbox', label: 'Special handling (fragile)' }, { el: quoteBox },
-    ], { submit: 'Create test order', intro: note('TEST TOOL: creates an order flagged as test data from the seller\'s real stock. There is no customer checkout on this site yet, so this is how a delivery starts in a test environment.', 'test'),
+    ], { submit: 'Create test order', intro: note('TEST TOOL (non-production): creates a simulated order from a shop\'s real stock. Real customer orders arrive automatically from the NearBuy Customer Storefront at /customer/.', 'test'),
       onSubmit: async (v) => { const body = { ...v, scheduled_for: v.scheduled_for ? new Date(v.scheduled_for).toISOString() : undefined }; const r = await api('/api/admin/test-orders', { method: 'POST', body }); close(); toast(r.message || `Created ${r.delivery_code}.`, 'ok'); done(r); } });
     const close = modal('Create a test order', h('div', { class: 'stack' }, f, btn('Show the delivery fee first', async (b) => { const v = f.values(); const q = await act(b, () => api('/api/admin/test-orders/quote', { method: 'POST', body: { ...v, scheduled_for: v.scheduled_for ? new Date(v.scheduled_for).toISOString() : undefined } })); if (q) mount(quoteBox, note(`${q.zone} · ${q.distance_km} km · customer pays ${money(q.fee.total)} · about ${q.estimated_minutes} min`, 'ok')); }, 'sm')));
   }).catch((e) => toast(e.message, 'bad'));
@@ -231,7 +240,7 @@ function pagePartner(code, silent) {
           card('Recent deliveries', table([{ label: 'Delivery', render: (x) => h('a', { href: `#/deliveries/${x.code}` }, x.code) }, { label: 'Status', render: (x) => statusBadge(x.status, x.status_label) }, { label: 'Category', render: (x) => S.me.categories[x.category] }, { label: 'Date', render: (x) => dt(x.completed_at || x.created_at) }, { label: 'Earning', right: true, render: (x) => money(x.partner_earning) }], p.recent_deliveries, { emptyText: 'No deliveries yet.' })),
           card('Application history', timeline(p.history.map((x) => ({ label: x.label, created_at: x.created_at, actor: x.actor, note: x.note }))))),
         h('div', { class: 'stack' },
-          card('Profile', kv([['Mobile', `${p.mobile} ${p.mobile_verified ? '✓ verified' : '(not verified)'}`], ['Email', `${p.email} ${p.email_verified ? '✓ verified' : '(not verified)'}`], ['City', p.city], ['Language', p.language], ['Zones', p.zones.map((z) => z.name).join(', ')], ['Emergency contact', p.emergency_name ? `${p.emergency_name} · ${p.emergency_phone_masked}` : null], ['Training', p.training_completed_at ? `Completed ${day(p.training_completed_at)}` : 'Not completed'], ['Documents valid until', p.documents_valid_until ? day(p.documents_valid_until) : null], ['Rating', p.rating ? `${p.rating} ★` : null], ['Last location', p.last_location_at ? ago(p.last_location_at) : null]])),
+          card('Profile', kv([['Date of birth (18+)', p.date_of_birth ? `${p.date_of_birth} (${p.age} yrs)` : badge('Missing — required before approval', 'bad')], ['Mobile', `${p.mobile} ${p.mobile_verified ? '✓ verified' : '(not verified)'}`], ['Email', `${p.email} ${p.email_verified ? '✓ verified' : '(not verified)'}`], ['City', p.city], ['Language', p.language], ['Zones', p.zones.map((z) => z.name).join(', ')], ['Emergency contact', p.emergency_name ? `${p.emergency_name} · ${p.emergency_phone_masked}` : null], ['Training', p.training_completed_at ? `Completed ${day(p.training_completed_at)}` : 'Not completed'], ['Documents valid until', p.documents_valid_until ? day(p.documents_valid_until) : null], ['Rating', p.rating ? `${p.rating} ★` : null], ['Last location', p.last_location_at ? ago(p.last_location_at) : null]])),
           card('Vehicle', p.vehicle ? [kv([['Type', p.vehicle.label], ['Registration', p.vehicle.registration_no], ['Ownership', title(p.vehicle.ownership)], ['Record', statusBadge(p.vehicle.status)]]), h('div', { class: 'row' }, p.vehicle.status !== 'verified' ? btn('Verify vehicle', review('vehicle-review', { decision: 'verified' }), 'sm primary') : null, p.vehicle.status !== 'rejected' ? btn('Reject vehicle', review('vehicle-review', { decision: 'rejected' }), 'sm danger') : null)] : empty('No vehicle.')),
           card('Payout account', p.payout ? [kv([['Holder', p.payout.holder], ['Bank', p.payout.bank], ['Account', `•••• ${p.payout.account_ending}`], ['IFSC', p.payout.ifsc], ['Record', statusBadge(p.payout.status)]]), h('div', { class: 'row' }, p.payout.status !== 'verified' ? btn('Verify payout account', review('payout-review', { decision: 'verified' }), 'sm primary') : null, p.payout.status !== 'rejected' ? btn('Reject', review('payout-review', { decision: 'rejected' }), 'sm danger') : null)] : empty('No payout account.')),
           card('Wallet', kv([['Available', money(p.wallet.available)], ['Pending (cash orders)', money(p.wallet.pending)], ['In payout', money(p.wallet.in_payout)], ['Paid', money(p.wallet.paid)], ['Cash in hand', money(p.cash_in_hand)], ['Completed in 30 days', p.activity.completed_30d], ['Active delivery', p.activity.active ? h('a', { href: `#/deliveries/${p.activity.active}` }, p.activity.active) : 'None']]),
@@ -356,6 +365,112 @@ function pageAudit() {
   });
 }
 
+/* ---------- Unified Marketplace Ops Pages ---------- */
+function pageSellers() {
+  const status = currentRoute().query.status || 'all';
+  S.refresh = () => pageSellers();
+  const reviewSeller = (s, decision) => formModal(`${title(decision)} ${s.store_name}`,
+    [{ name: 'note', label: 'Note / Reason', required: decision !== 'approve', placeholder: 'Recorded in audit log and shown to the seller' }],
+    { submit: title(decision), danger: decision === 'suspend' || decision === 'reject',
+      onSubmit: async (v) => { await api(`/api/admin/sellers/${s.code}/review`, { method: 'POST', body: { decision, note: v.note } }); toast(`Seller ${s.code} updated.`, 'ok'); pageSellers(); } });
+  return page('/sellers', 'Shops & sellers', () => api('/api/admin/sellers', { query: { status } }), (d) => shell('/sellers', 'Shops & sellers', null,
+    tabs([['all', 'All'], ['approved', 'Approved'], ['under_review', 'Under review'], ['needs_info', 'Needs info'], ['suspended', 'Suspended']], status, (k) => go(`/sellers?status=${k}`)),
+    table([
+      { label: 'Shop', render: (s) => h('div', null, h('strong', null, s.store_name), ' ', demoTag(s.is_demo), h('div', { class: 'small muted' }, `${s.code} · ${s.owner_email || '—'} · PIN ${s.pincode || '—'}`)) },
+      { label: 'Status', render: (s) => h('div', { class: 'row' }, statusBadge(s.status), badge(s.is_open ? 'Open' : 'Paused', s.is_open ? 'ok' : 'warn')) },
+      { label: 'Listings', right: true, render: (s) => `${s.active_listings} live${s.pending_listings ? ` (${s.pending_listings} pending)` : ''}` },
+      { label: 'Orders / GMV', right: true, render: (s) => `${s.total_orders} · ${money(s.gmv)}` },
+      { label: 'Actions', render: (s) => h('div', { class: 'row' },
+        s.status !== 'approved' ? btn('Approve', () => reviewSeller(s, 'approve'), 'sm primary') : null,
+        s.status !== 'suspended' ? btn('Suspend', () => reviewSeller(s, 'suspend'), 'sm danger') : null) },
+    ], d.sellers, { emptyText: 'No shops match this filter.' })));
+}
+function pageListings() {
+  const status = currentRoute().query.status || 'all';
+  S.refresh = () => pageListings();
+  const reviewListing = (p, decision) => formModal(`${title(decision)} ${p.code}`,
+    [{ name: 'note', label: 'Note for seller', required: decision !== 'approve' }],
+    { submit: title(decision), danger: decision !== 'approve',
+      onSubmit: async (v) => { await api(`/api/admin/listings/${p.code}/review`, { method: 'POST', body: { decision, note: v.note } }); toast(`Listing ${p.code} updated.`, 'ok'); pageListings(); } });
+  return page('/listings', 'Listings moderation', () => api('/api/admin/listings', { query: { status } }), (d) => shell('/listings', 'Listings moderation', null,
+    tabs([['all', 'All'], ['under_review', 'Pending review'], ['active', 'Active'], ['rejected', 'Rejected'], ['inactive', 'Inactive']], status, (k) => go(`/listings?status=${k}`)),
+    table([
+      { label: 'Product', render: (p) => h('div', null, h('strong', null, p.title), h('div', { class: 'small muted' }, `${p.code} · ${p.store_name} (${p.seller_code}) · ${p.category}`)) },
+      { label: 'Price', right: true, render: (p) => money(p.price) },
+      { label: 'Stock', right: true, render: (p) => p.available_stock },
+      { label: 'Status', render: (p) => statusBadge(p.status) },
+      { label: 'Actions', render: (p) => h('div', { class: 'row' },
+        p.status !== 'active' ? btn('Approve', () => reviewListing(p, 'approve'), 'sm primary') : null,
+        p.status === 'under_review' ? btn('Reject', () => reviewListing(p, 'reject'), 'sm danger') : null,
+        p.status === 'active' ? btn('Deactivate', () => reviewListing(p, 'deactivate'), 'sm danger') : null) },
+    ], d.listings, { emptyText: 'No listings found.' })));
+}
+function pageCustomers() {
+  const q = currentRoute().query.q || '';
+  S.refresh = () => pageCustomers();
+  const toggleStatus = (c, action) => formModal(`${title(action)} ${c.name}`,
+    [{ name: 'reason', label: 'Reason', required: action === 'suspend', placeholder: 'Recorded in audit log' }],
+    { submit: title(action), danger: action === 'suspend',
+      onSubmit: async (v) => { await api(`/api/admin/customers/${c.id}/status`, { method: 'POST', body: { action, reason: v.reason } }); toast('Customer account updated.', 'ok'); pageCustomers(); } });
+  return page('/customers', 'Customers', () => api('/api/admin/customers', { query: { q } }), (d) => {
+    const search = h('input', { class: 'input', type: 'search', placeholder: 'Search name, email or PIN', value: q, style: 'max-width:320px' });
+    search.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(`/customers${qs({ q: search.value.trim() })}`); });
+    shell('/customers', 'Customers', null, search,
+      table([
+        { label: 'Customer', render: (c) => h('div', null, h('strong', null, c.name), h('div', { class: 'small muted' }, `${c.email}${c.mobile ? ` · ${c.mobile}` : ''}`)) },
+        { label: 'Area / PIN', render: (c) => [c.area, c.pincode].filter(Boolean).join(' · ') || '—' },
+        { label: 'Orders / Spend', right: true, render: (c) => `${c.order_count} · ${money(c.total_spent)}` },
+        { label: 'Status', render: (c) => c.suspended ? badge('Suspended', 'bad') : badge('Active', 'ok') },
+        { label: 'Action', render: (c) => c.suspended ? btn('Reinstate', () => toggleStatus(c, 'reinstate'), 'sm primary') : btn('Suspend', () => toggleStatus(c, 'suspend'), 'sm danger') },
+      ], d.customers, { emptyText: 'No registered customers yet.' }));
+  });
+}
+function pageAdminOrders() {
+  const status = currentRoute().query.status || 'all';
+  S.refresh = () => pageAdminOrders();
+  return page('/orders', 'All marketplace orders', () => api('/api/admin/orders', { query: { status } }), (d) => shell('/orders', 'All marketplace orders', null,
+    tabs([['all', 'All'], ['new', 'New'], ['processing', 'Preparing'], ['packed', 'Packed'], ['shipped', 'Dispatched'], ['delivered', 'Delivered'], ['cancelled', 'Cancelled']], status, (k) => go(`/orders?status=${k}`)),
+    table([
+      { label: 'Order', render: (o) => h('div', null, h('strong', null, o.code), ' ', demoTag(o.is_demo), h('div', { class: 'small muted' }, [o.customer_order_code, dt(o.placed_at)].filter(Boolean).join(' · '))) },
+      { label: 'Shop', render: (o) => `${o.store_name} (${o.seller_code})` },
+      { label: 'Fulfilment', render: (o) => h('div', null, badge(o.fulfilment === 'pickup' ? 'Free pickup' : (o.delivery_mode === 'self' ? 'Shop self-delivery' : 'NearBuy Runner'), 'info'), o.delivery_code ? h('div', { class: 'small' }, h('a', { href: `#/deliveries/${o.delivery_code}` }, `${o.delivery_code} (${o.delivery_status})`)) : null) },
+      { label: 'Payment', render: (o) => `${o.payment_method} · ${o.payment_status}` },
+      { label: 'Status', render: (o) => statusBadge(o.status) },
+      { label: 'Total', right: true, render: (o) => money(o.total) },
+    ], d.orders, { emptyText: 'No orders found.' })));
+}
+function pageDisputes() {
+  S.refresh = () => pageDisputes();
+  const replySellerTicket = (t) => formModal(`Reply to seller ticket ${t.code}`,
+    [{ name: 'message', label: 'Response to seller', type: 'textarea', required: true }, { name: 'status', label: 'New status', type: 'select', value: 'in_progress', options: [['in_progress', 'In progress'], ['waiting_on_seller', 'Waiting on seller'], ['resolved', 'Resolved']] }],
+    { submit: 'Send reply', onSubmit: async (v) => { await api(`/api/admin/seller-tickets/${t.code}/reply`, { method: 'POST', body: v }); toast('Reply sent to seller.', 'ok'); pageDisputes(); } });
+  return page('/disputes', 'Disputes, returns & tickets', () => api('/api/admin/disputes'), (d) => shell('/disputes', 'Disputes, returns & tickets', null,
+    card(`Customer order & delivery complaints (${d.customer_complaints.length})`,
+      table([
+        { label: 'Ticket', render: (t) => h('div', null, h('strong', null, t.code), h('div', { class: 'small muted' }, t.subject)) },
+        { label: 'Shop / Delivery', render: (t) => [t.store_name, t.delivery_code].filter(Boolean).join(' · ') || '—' },
+        { label: 'Raised by', key: 'created_by' },
+        { label: 'Status', render: (t) => statusBadge(t.status) },
+        { label: 'Open', render: (t) => h('a', { class: 'btn sm', href: `#/support/${t.code}` }, 'Manage') },
+      ], d.customer_complaints, { emptyText: 'No customer complaints logged.' })),
+    card(`Seller support tickets (${d.seller_tickets.length})`,
+      table([
+        { label: 'Ticket', render: (t) => h('div', null, h('strong', null, t.code), h('div', { class: 'small muted' }, t.subject)) },
+        { label: 'Shop', render: (t) => `${t.store_name} (${t.seller_code})` },
+        { label: 'Team / Priority', render: (t) => `${t.assigned_team} · ${t.priority}` },
+        { label: 'Status', render: (t) => statusBadge(t.status) },
+        { label: 'Action', render: (t) => btn('Reply / Resolve', () => replySellerTicket(t), 'sm primary') },
+      ], d.seller_tickets, { emptyText: 'No seller support tickets.' })),
+    card(`Customer returns & refunds (${d.returns.length})`,
+      table([
+        { label: 'Return', render: (r) => h('div', null, h('strong', null, r.code), h('div', { class: 'small muted' }, `${r.order_code} · ${r.reason}`)) },
+        { label: 'Shop', render: (r) => `${r.store_name} (${r.seller_code})` },
+        { label: 'Status', render: (r) => statusBadge(r.status) },
+        { label: 'Refund ledger', render: (r) => badge(r.refund_status || 'none', r.refund_status === 'recorded' ? 'ok' : 'warn') },
+        { label: 'Requested', render: (r) => dt(r.requested_at) },
+      ], d.returns, { emptyText: 'No returns requested yet.' }))));
+}
+
 /* ---------- Router ---------- */
 function render() {
   if (!S.me) return pageLogin();
@@ -365,6 +480,11 @@ function render() {
     case 'map': return pageMap();
     case 'deliveries': return r.parts[1] ? pageDelivery(r.parts[1]) : pageDeliveries();
     case 'partners': return r.parts[1] ? pagePartner(r.parts[1]) : pagePartners();
+    case 'sellers': return pageSellers();
+    case 'listings': return pageListings();
+    case 'customers': return pageCustomers();
+    case 'orders': return pageAdminOrders();
+    case 'disputes': return pageDisputes();
     case 'zones': return pageZones();
     case 'finance': return pageFinance();
     case 'support': return pageSupport(r.parts);

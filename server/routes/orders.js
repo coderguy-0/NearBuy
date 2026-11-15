@@ -78,7 +78,7 @@ function deductOrderStock(sellerId, order, actor) {
  * Create an order with consistent pricing, tax and stock reservation. Used by the demo seeder and the
  * "simulate customer order" action; a real storefront integration would call the same function.
  */
-function createOrder(sellerId, { lines, customer, placedAt, paymentMethod = 'Prepaid', isDemo = true, quietNotify = false, applyPromotions = false }) {
+function createOrder(sellerId, { lines, customer, placedAt, paymentMethod = 'Prepaid', paymentStatus, isDemo = true, quietNotify = false, applyPromotions = false }) {
   const at = placedAt || nowIso();
   const promosApplied = [];
   let subtotal = 0;
@@ -105,7 +105,7 @@ function createOrder(sellerId, { lines, customer, placedAt, paymentMethod = 'Pre
   const orderId = insert('orders', {
     seller_id: sellerId, code, placed_at: at, status: 'new', customer_ref: customer.ref, customer_name: customer.name, customer_phone: customer.phone,
     ship_address: customer.address, ship_city: customer.city, ship_state: customer.state, ship_pincode: customer.pincode, payment_method: paymentMethod,
-    payment_status: paymentMethod === 'Prepaid' ? 'paid' : 'cod_pending', subtotal: r2(subtotal), shipping_charge: shipping, tax_total: r2(taxTotal),
+    payment_status: paymentStatus || (paymentMethod === 'Prepaid' ? 'paid' : 'cod_pending'), subtotal: r2(subtotal), shipping_charge: shipping, tax_total: r2(taxTotal),
     total: r2(subtotal + shipping), dispatch_by: new Date(Date.parse(at) + dispatchDays * 86400000).toISOString(), is_demo: isDemo ? 1 : 0, updated_at: at,
   });
   rows.forEach((row) => insert('order_items', { seller_id: sellerId, order_id: orderId, ...row }));
@@ -114,7 +114,10 @@ function createOrder(sellerId, { lines, customer, placedAt, paymentMethod = 'Pre
   if (promosApplied.length) addOrderEvent(sellerId, orderId, 'new', 'Promotion price applied', [...new Set(promosApplied)].join(', '), 'System', at);
   const reserved = reserveOrderStock(sellerId, order, 'System');
   if (!reserved) addOrderEvent(sellerId, orderId, 'new', 'Stock check needed', 'Available stock is lower than the ordered quantity. Update inventory before accepting.', 'System', at);
-  if (!quietNotify) notify(sellerId, 'order', `New order ${code}`, `${rows[0].title}${rows.length > 1 ? ` and ${rows.length - 1} more` : ''} · ₹${r2(subtotal + shipping).toLocaleString('en-IN')}`, `/seller/orders/${code}`);
+  if (!quietNotify) {
+    notify(sellerId, 'order', `New order ${code}`, `${rows[0].title}${rows.length > 1 ? ` and ${rows.length - 1} more` : ''} · ₹${r2(subtotal + shipping).toLocaleString('en-IN')}`, `/seller/orders/${code}`);
+    try { require('../delivery/core').publish([`seller:${sellerId}`, 'admin'], { kind: 'order', code, status: 'new' }); } catch {}
+  }
   return get('SELECT * FROM orders WHERE id = ?', orderId);
 }
 
@@ -159,11 +162,19 @@ function orderDetail(ctx, order) {
     dispatch_by: order.dispatch_by, stock_state: order.stock_state,
     cancellation: order.status === 'cancelled' ? { reason: order.cancel_reason, by: order.cancelled_by, at: order.cancelled_at } : null,
     shipment: shipment ? shipmentView(sellerId, shipment, false) : null,
+    fulfilment: order.fulfilment || 'delivery',
+    delivery_mode: order.delivery_mode || 'network',
+    is_marketplace_order: Boolean(order.customer_order_id),
     network_delivery: networkDelivery(order.id),
     timeline: all('SELECT status, title, note, actor, created_at FROM order_events WHERE order_id = ? AND seller_id = ? ORDER BY id', order.id, sellerId),
     returns: all('SELECT code, status, refund_status, requested_at FROM returns WHERE order_id = ? AND seller_id = ?', order.id, sellerId),
     fees_estimate: ctx.can('payments.read') ? feeBreakdown(sellerId, order) : null,
-    actions: allowedActions(order, shipment, ctx.can('orders.write')).filter((a) => !(NETWORK_ONLY.includes(a.key) && networkDelivery(order.id))),
+    actions: allowedActions(order, shipment, ctx.can('orders.write')).filter((a) => {
+      if (NETWORK_ONLY.includes(a.key) && networkDelivery(order.id)) return false;
+      if (order.customer_order_id && a.key === 'deliver') return false;
+      if (order.fulfilment === 'pickup' && ['shipment', 'ready', 'dispatch', 'deliver'].includes(a.key)) return false;
+      return true;
+    }),
     cancel_reasons: CANCEL_REASONS,
     documents: { invoice: order.status !== 'new' && order.status !== 'cancelled', label: Boolean(shipment) && order.status !== 'cancelled' },
   };
@@ -206,11 +217,33 @@ function setShipmentStatus(ctx, shipment, status, title, note) {
 const NETWORK_ONLY = ['dispatch', 'deliver', 'fail', 'reattempt', 'rto'];
 function applyOrderAction(ctx, order, action, body) {
   const engine = require('../delivery/engine'); // lazy: the delivery engine depends on this module
+  const core = require('../delivery/core');
   if (!ctx.system && NETWORK_ONLY.includes(action) && engine.hasNetworkDelivery(order.id)) {
     throw conflict('This order is delivered by the delivery network. Pickup and delivery are recorded when the partner verifies the handover, and cannot be changed here.');
   }
+  if (!ctx.system && action === 'deliver' && order.customer_order_id) {
+    throw conflict(order.fulfilment === 'pickup'
+      ? 'Store pickup orders must be completed by verifying the customer\'s collection code.'
+      : 'Customer orders cannot be marked delivered without verifying the customer\'s delivery code.');
+  }
   const message = applyOrderStep(ctx, order, action, body);
   if (!ctx.system) engine.onOrderChanged(ctx.sellerId, order.id, ctx.user);
+  const refreshed = get('SELECT * FROM orders WHERE id = ?', order.id);
+  if (refreshed && refreshed.customer_order_id) {
+    core.syncCustomerOrderStatus(refreshed.customer_order_id);
+    const shop = get('SELECT store_name, business_name FROM sellers WHERE id = ?', ctx.sellerId);
+    const shopName = (shop && (shop.store_name || shop.business_name)) || 'Your shop';
+    const noteMap = {
+      accept: [`${shopName} accepted your order`, `Order ${order.code} is confirmed and will be prepared soon.`],
+      process: [`${shopName} is preparing your order`, `Order ${order.code} is being prepared.`],
+      pack: [refreshed.fulfilment === 'pickup' ? `${shopName} packed your order for pickup` : `${shopName} packed your order`,
+        refreshed.fulfilment === 'pickup' ? `Order ${order.code} is ready to collect at the shop. Show your collection code.` : `Order ${order.code} is packed and ready for delivery.`],
+      dispatch: [`${shopName} dispatched your order`, `Order ${order.code} is on the way.`],
+      cancel: [`${shopName} cancelled your order`, refreshed.cancel_reason || `Order ${order.code} was cancelled by the seller.`],
+    };
+    if (noteMap[action] && !ctx.system) core.notifyCustomerForOrder(refreshed, 'order', noteMap[action][0], noteMap[action][1]);
+  }
+  core.publish([`seller:${ctx.sellerId}`, 'admin'], { kind: 'order', code: order.code, status: refreshed ? refreshed.status : order.status });
   return message;
 }
 function applyOrderStep(ctx, order, action, body) {
@@ -272,6 +305,7 @@ function applyOrderStep(ctx, order, action, body) {
     patch.cancelled_by = `Seller (${actor})`;
     patch.cancelled_at = nowIso();
     if (order.payment_status === 'paid') patch.payment_status = 'refund_pending_gateway';
+    if (order.payment_status === 'unconfirmed_prepaid') patch.payment_status = 'not_charged';
     if (order.payment_status === 'cod_pending') patch.payment_status = 'not_collected';
     note = patch.cancel_reason;
     if (shipment) setShipmentStatus(ctx, shipment, 'returned', 'Shipment cancelled', 'Order cancelled before dispatch.');
@@ -602,6 +636,11 @@ function applyReturnAction(ctx, r, action, body) {
     addReturnEvent(ctx.sellerId, r.id, 'complete', 'Return completed', null, 'System');
     message = 'Refund deduction recorded in your ledger and the return is complete. No money was moved — a payment gateway is not connected.';
   }
+  if (order && order.customer_order_id) {
+    const core = require('../delivery/core');
+    const updated = get('SELECT status FROM returns WHERE id = ?', r.id);
+    core.notifyCustomerForOrder(order, 'return', `Return ${r.code}: ${RETURN_STATUS[updated ? updated.status : r.status]}`, message);
+  }
   logActivity(ctx, `Return: ${def.label}`, 'return', r.code);
   return message;
 }
@@ -638,4 +677,4 @@ route('POST', '/api/returns/:code/actions', { perm: 'returns.write' }, (ctx) => 
   return { ok: true, message, return: returnView(ctx, find(), true) };
 });
 
-module.exports = { createOrder, createReturn, applyOrderAction, applyReturnAction, createShipment, demoCustomer, ORDER_STATUS, ORDER_TABS, RETURN_STATUS, RETURN_REASONS, SHIPMENT_STATUS, addOrderEvent, addShipmentEvent, addReturnEvent };
+module.exports = { createOrder, createReturn, applyOrderAction, applyReturnAction, createShipment, deductOrderStock, demoCustomer, ORDER_STATUS, ORDER_TABS, RETURN_STATUS, RETURN_REASONS, SHIPMENT_STATUS, addOrderEvent, addShipmentEvent, addReturnEvent };

@@ -194,11 +194,23 @@ function handleStatic(req, res, url) {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.some((s) => s.startsWith('.') || s.includes('\\')) || BLOCKED_TOP.has(segments[0])) { notFoundPage(res); return; }
 
-  // Seller Hub single-page app: every /seller/... URL that is not a static asset opens the app shell.
-  if (segments[0] === 'customer' && segments[1] !== 'app') {
+  // Customer storefront SPA: serve real static files (app.js, app.css, login/index.html) directly,
+  // and fall back to customer/index.html for SPA routes.
+  if (segments[0] === 'customer') {
+    const candidate = path.join(ROOT, ...segments);
+    if (segments.length > 1 && candidate.startsWith(ROOT) && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      sendFile(res, candidate, { 'Content-Security-Policy': SPA_CSP }, req.method);
+      return;
+    }
+    if (segments.length === 2 && segments[1] === 'login') {
+      res.writeHead(302, baseHeaders({ Location: '/customer/#/login' }));
+      res.end();
+      return;
+    }
     sendFile(res, path.join(ROOT, 'customer', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method);
     return;
   }
+  // Seller Hub single-page app: every /seller/... URL that is not a static asset opens the app shell.
   if (segments[0] === 'seller' && segments[1] !== 'app') {
     sendFile(res, path.join(ROOT, 'seller', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method);
     return;
@@ -228,8 +240,8 @@ const server = http.createServer((req, res) => {
 
 function start(port = PORT) {
   seedIfNeeded();
-  seedMarketplace();
   delivery.seedDelivery();
+  seedMarketplace();
   delivery.startBackground();
   return new Promise((resolve) => {
     server.listen(port, HOST, () => {
