@@ -1,5 +1,5 @@
 // Seller Hub → Local Deliveries & Find a NearBuy Runner marketplace.
-import { h, icon, api, can, reload, toast, field, formModal, modal, busy, banner, badge, statusBadge, demoTag, pageHead, card, tabs, emptyState, kv, timeline, inr, fmtDateTime } from './core.js';
+import { h, icon, api, can, reload, toast, field, formModal, openModal, busy, banner, badge, statusBadge, demoTag, pageHead, card, tabs, emptyState, kv, timeline, inr, fmtDateTime } from './core.js';
 
 const TABS = [
   ['new', 'New orders'], ['preparing', 'Preparing'], ['ready', 'Ready for pickup'],
@@ -91,7 +91,7 @@ async function openFindRunner(deliveryCode) {
   let countdownTimer = null;
 
   const container = h('div.stack');
-  const { close } = modal({ title: `Find a NearBuy Runner · ${deliveryCode}`, subtitle: 'Compare verified 18+ local partners, review parcel fit, and send an atomic appointment offer.', wide: true, body: container });
+  const { close } = openModal({ title: `Find a NearBuy Runner · ${deliveryCode}`, subtitle: 'Compare verified 18+ local partners, review parcel fit, and send an atomic appointment offer.', wide: true, body: container });
   const cleanup = () => { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } };
 
   async function refresh() {
@@ -340,7 +340,7 @@ async function openTestOrder(data) {
     const v = Object.fromEntries(new FormData(form));
     try { const q = await api('/seller/deliveries/test-orders/quote', { method: 'POST', body: v }); quoteBox.textContent = `${q.zone.name} · ${q.distance_km} km · customer fee ${inr(q.fee.total)} · partner earning ${inr(q.earning.total)}`; } catch (e) { quoteBox.textContent = e.message; }
   } }, 'Check delivery quote'), h('button.btn.primary', { type: 'submit' }, 'Create test delivery')));
-  const { close } = modal({ title: 'Create a test delivery (non-production)', subtitle: 'Real customer orders arrive automatically from the NearBuy Customer Storefront. Use this tool only to simulate a delivery in testing environments.', wide: true, body: form });
+  const { close } = openModal({ title: 'Create a test delivery (non-production)', subtitle: 'Real customer orders arrive automatically from the NearBuy Customer Storefront. Use this tool only to simulate a delivery in testing environments.', wide: true, body: form });
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {

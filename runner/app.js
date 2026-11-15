@@ -86,7 +86,12 @@ async function pageLogin() {
         tabs([['password', 'Password'], ['otp', 'One-time code']], mode, (m) => { mode = m; draw(); }), mode === 'password' ? pw : otpBox,
         h('div', { class: 'row between small' }, h('a', { href: '#/forgot' }, 'Forgot password?'), h('a', { href: '#/register' }, 'Become a delivery partner')),
         demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample approved partner (demo data) is available.'),
-          btn('Fill demo partner sign-in', () => { mode = 'password'; draw(); const f = root.querySelector('form'); f.controls.identifier.value = demo.partner.identifier; f.controls.password.value = demo.partner.password; }, 'sm yellow')) : null,
+          btn('Sign in with the demo partner', () => {
+            mode = 'password'; draw();
+            const f = root.querySelector('form');
+            f.controls.identifier.value = demo.partner.identifier; f.controls.password.value = demo.partner.password;
+            f.requestSubmit ? f.requestSubmit() : f.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          }, 'sm yellow')) : null,
         h('p', { class: 'tiny muted' }, 'NearBuy Delivery partners only. Shop owners and customers sign in through their own portals.')));
   };
   draw();

@@ -301,6 +301,15 @@
       openChooser();
       return;
     }
+    // A single visible route into the demo: open a portal whose sign-in is already filled with a working account.
+    var demoBtn = event.target.closest ? event.target.closest('[data-demo-signin]') : null;
+    if (demoBtn) {
+      event.preventDefault();
+      // Seller, runner and operations sign-in pages are pre-filled / offer a one-tap demo themselves, so link straight to them.
+      var dest = { shop: '/customer/#/login', seller: '/seller/login', runner: '/runner/', ops: '/control-tower/' }[demoBtn.getAttribute('data-demo-signin')];
+      if (dest) window.location.href = dest;
+      return;
+    }
     var closer = event.target.closest ? event.target.closest('[data-close-chooser]') : null;
     if (closer) {
       event.preventDefault();

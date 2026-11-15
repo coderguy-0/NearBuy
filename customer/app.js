@@ -18,14 +18,19 @@ const el = (tag, attrs = {}, ...children) => {
 };
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+// Internal payment states read as awkward sentences ("Cash on delivery (cod pending)"); show plain language instead.
+const PAYMENT_STATES = { cod_pending: 'pay on delivery', unconfirmed_prepaid: 'not captured — no payment gateway', paid: 'paid', refunded: 'refunded' };
+const paymentStateLabel = (state) => PAYMENT_STATES[state] || String(state || '').replace(/_/g, ' ');
 const initials = (name) => String(name || 'NB').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
+// The customer API lives at /api/... on the same server; callers pass paths such as '/customer/me'.
+const API_BASE = '/api';
 async function api(method, path, body) {
   const headers = { 'X-NearBuy-Client': 'customer' };
   if (method !== 'GET' && method !== 'HEAD') headers['X-NearBuy-Request'] = '1';
   const opts = { method, headers, credentials: 'same-origin' };
   if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
-  const res = await fetch(path, opts);
+  const res = await fetch(`${API_BASE}${path.replace(/^\/api/, '')}`, opts);
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { error: text }; }
@@ -116,7 +121,7 @@ function connectRealtime() {
 
 async function refreshSession() {
   try {
-    const me = await api('GET', '/api/customer/me');
+    const me = await api('GET', '/customer/me');
     state.customer = me.customer;
     state.unread = me.unread || 0;
     if (me.customer.address && me.customer.address.pincode) {
@@ -255,8 +260,8 @@ async function viewHome() {
   renderShell(loading('Checking neighbourhood shops near you…'));
   try {
     const [shopData, prodData] = await Promise.all([
-      api('GET', `/api/customer/shops${state.pincode ? `?pincode=${encodeURIComponent(state.pincode)}` : ''}`),
-      api('GET', `/api/customer/products?in_stock=1${state.pincode ? `&pincode=${encodeURIComponent(state.pincode)}` : ''}`),
+      api('GET', `/customer/shops${state.pincode ? `?pincode=${encodeURIComponent(state.pincode)}` : ''}`),
+      api('GET', `/customer/products?in_stock=1${state.pincode ? `&pincode=${encodeURIComponent(state.pincode)}` : ''}`),
     ]);
     const banner = el('section', { class: 'hero' },
       el('div', { class: 'wrap hero__in' },
@@ -345,7 +350,7 @@ async function viewSearch(queryString) {
     if (category) qs.set('category', category);
     if (sort) qs.set('sort', sort);
     if (inStockOnly) qs.set('in_stock', '1');
-    const data = await api('GET', `/api/customer/products?${qs.toString()}`);
+    const data = await api('GET', `/customer/products?${qs.toString()}`);
 
     const updateFilter = (patch) => {
       const next = new URLSearchParams({ q, category, sort, ...(inStockOnly ? { in_stock: '1' } : {}), ...patch });
@@ -404,7 +409,7 @@ async function viewSearch(queryString) {
 async function viewShop(code, selectedCat = '') {
   renderShell(loading('Loading shop catalogue…'));
   try {
-    const data = await api('GET', `/api/customer/shops/${encodeURIComponent(code)}`);
+    const data = await api('GET', `/customer/shops/${encodeURIComponent(code)}`);
     const shop = data.shop;
     const filtered = selectedCat ? data.products.filter((p) => p.category === selectedCat) : data.products;
 
@@ -449,7 +454,7 @@ async function viewShop(code, selectedCat = '') {
 async function viewProduct(code) {
   renderShell(loading('Loading product details…'));
   try {
-    const data = await api('GET', `/api/customer/products/${encodeURIComponent(code)}`);
+    const data = await api('GET', `/customer/products/${encodeURIComponent(code)}`);
     const p = data.product;
     let selectedVariant = p.variants && p.variants[0] ? p.variants[0] : { inventory_id: p.inventory_id, label: 'Standard', price: p.price, available: p.available, in_stock: p.in_stock };
 
@@ -545,7 +550,7 @@ async function viewCart() {
   renderShell(loading('Checking live stock and delivery quotes…'));
   let savedAddresses = [];
   if (state.customer) {
-    try { savedAddresses = (await api('GET', '/api/customer/addresses')).addresses || []; } catch {}
+    try { savedAddresses = (await api('GET', '/customer/addresses')).addresses || []; } catch {}
   }
   const addressLine = state.draftAddress || (state.customer && state.customer.address && state.customer.address.line) || (savedAddresses[0] && savedAddresses[0].address) || '';
   const pincode = state.pincode || (state.customer && state.customer.address && state.customer.address.pincode) || (savedAddresses[0] && savedAddresses[0].pincode) || '110016';
@@ -554,7 +559,7 @@ async function viewCart() {
   let quote = null;
   let quoteErr = null;
   try {
-    quote = await api('POST', '/api/customer/cart/price', {
+    quote = await api('POST', '/customer/cart/price', {
       items: state.cart.map((i) => ({ inventory_id: i.inventory_id, qty: i.qty })),
       fulfilment: state.fulfilment,
       per_shop: state.perShop,
@@ -650,7 +655,7 @@ async function viewCart() {
       placeBtn.disabled = true; placeBtn.textContent = 'Placing order…';
       try {
         if (!state.checkoutKey) state.checkoutKey = `chk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const placed = await api('POST', '/api/customer/orders', {
+        const placed = await api('POST', '/customer/orders', {
           items: state.cart.map((i) => ({ inventory_id: i.inventory_id, qty: i.qty })),
           fulfilment: state.fulfilment,
           per_shop: state.perShop,
@@ -709,7 +714,7 @@ async function viewOrders() {
   if (!state.customer) { location.hash = '#/login?next=/orders'; return; }
   renderShell(loading('Loading your orders…'));
   try {
-    const data = await api('GET', '/api/customer/orders');
+    const data = await api('GET', '/customer/orders');
     const wrap = el('div', { class: 'wrap', style: 'padding-top:24px' },
       el('div', { class: 'sec-head', style: 'margin-top:0' },
         el('div', {}, el('h1', {}, 'My orders'), el('p', {}, 'Live order progress, verification codes, and tracking links across every shop.')),
@@ -757,14 +762,14 @@ async function viewOrderDetail(code) {
   if (!state.customer) { location.hash = `#/login?next=/orders/${code}`; return; }
   renderShell(loading('Loading live order status…'));
   try {
-    const o = (await api('GET', `/api/customer/orders/${encodeURIComponent(code)}`)).order;
+    const o = (await api('GET', `/customer/orders/${encodeURIComponent(code)}`)).order;
     const anyCancellable = o.shops.some((s) => s.cancellable);
 
     const cancelOrder = async () => {
       const reason = window.prompt('Reason for cancellation (optional):', 'Changed my mind');
       if (reason === null) return;
       try {
-        await api('POST', `/api/customer/orders/${encodeURIComponent(code)}/cancel`, { reason });
+        await api('POST', `/customer/orders/${encodeURIComponent(code)}/cancel`, { reason });
         toast('Order cancelled and stock released.', 'ok');
         viewOrderDetail(code);
       } catch (err) { toast(err.message, 'bad'); }
@@ -772,7 +777,7 @@ async function viewOrderDetail(code) {
 
     const refreshCode = async (orderCode) => {
       try {
-        await api('POST', `/api/customer/orders/${encodeURIComponent(code)}/shops/${encodeURIComponent(orderCode)}/refresh-code`, {});
+        await api('POST', `/customer/orders/${encodeURIComponent(code)}/shops/${encodeURIComponent(orderCode)}/refresh-code`, {});
         toast('Generated a fresh 4-digit verification code.', 'ok');
         viewOrderDetail(code);
       } catch (err) { toast(err.message, 'bad'); }
@@ -786,7 +791,7 @@ async function viewOrderDetail(code) {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
-            await api('POST', `/api/customer/orders/${encodeURIComponent(code)}/shops/${encodeURIComponent(shopRow.order_code)}/return`, {
+            await api('POST', `/customer/orders/${encodeURIComponent(code)}/shops/${encodeURIComponent(shopRow.order_code)}/return`, {
               reason: reasonSel.value, description: descIn.value.trim(),
             });
             toast('Return request sent to the shop.', 'ok');
@@ -814,7 +819,7 @@ async function viewOrderDetail(code) {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
-            const res = await api('POST', `/api/customer/orders/${encodeURIComponent(code)}/issue`, {
+            const res = await api('POST', `/customer/orders/${encodeURIComponent(code)}/issue`, {
               category: catSel.value, subject: subjIn.value.trim(), description: descIn.value.trim(),
             });
             toast(res.message, 'ok');
@@ -841,7 +846,7 @@ async function viewOrderDetail(code) {
             el('h1', {}, `Order ${o.code}`),
             el('span', { class: `pill ${o.status === 'delivered' ? 'ok' : o.status === 'cancelled' ? 'bad' : 'warn'}` }, o.status_label),
           ),
-          el('p', {}, `Placed ${fmtTime(o.placed_at)} · ${o.payment_method} (${o.payment_status.replace(/_/g, ' ')})`),
+          el('p', {}, `Placed ${fmtTime(o.placed_at)} · ${o.payment_method} · ${paymentStateLabel(o.payment_status)}`),
         ),
         el('div', { class: 'row' },
           anyCancellable ? el('button', { class: 'btn sm', type: 'button', onclick: cancelOrder }, 'Cancel order') : null,
@@ -923,7 +928,7 @@ async function viewNotifications() {
   if (!state.customer) { location.hash = '#/login?next=/notifications'; return; }
   renderShell(loading('Loading notifications…'));
   try {
-    const data = await api('GET', '/api/customer/notifications');
+    const data = await api('GET', '/customer/notifications');
     state.unread = data.unread || 0;
     renderHeader();
     const wrap = el('div', { class: 'wrap', style: 'padding-top:24px' },
@@ -931,7 +936,7 @@ async function viewNotifications() {
         el('div', {}, el('h1', {}, 'Notifications'), el('p', {}, `${data.unread} unread`)),
         data.unread ? el('button', {
           class: 'btn sm primary', type: 'button',
-          onclick: async () => { await api('POST', '/api/customer/notifications/read', {}); state.unread = 0; renderHeader(); viewNotifications(); },
+          onclick: async () => { await api('POST', '/customer/notifications/read', {}); state.unread = 0; renderHeader(); viewNotifications(); },
         }, 'Mark all read') : null,
       ),
       data.notifications.length
@@ -946,7 +951,7 @@ async function viewNotifications() {
               n.link ? el('a', { class: 'btn sm', href: n.link }, 'Open') : null,
               !n.read ? el('button', {
                 class: 'btn sm ghost', type: 'button',
-                onclick: async () => { await api('POST', `/api/customer/notifications/${n.id}/read`, {}); viewNotifications(); },
+                onclick: async () => { await api('POST', `/customer/notifications/${n.id}/read`, {}); viewNotifications(); },
               }, 'Mark read') : null,
             ),
           )))
@@ -964,9 +969,9 @@ async function viewAccount() {
   renderShell(loading('Loading your account…'));
   try {
     const [meRes, addrRes, sessRes] = await Promise.all([
-      api('GET', '/api/customer/me'),
-      api('GET', '/api/customer/addresses'),
-      api('GET', '/api/customer/sessions'),
+      api('GET', '/customer/me'),
+      api('GET', '/customer/addresses'),
+      api('GET', '/customer/sessions'),
     ]);
     state.customer = meRes.customer;
     const c = state.customer;
@@ -984,7 +989,7 @@ async function viewAccount() {
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          const res = await api('PATCH', '/api/customer/profile', {
+          const res = await api('PATCH', '/customer/profile', {
             name: nameIn.value.trim(),
             mobile: mobIn.value.trim() || undefined,
             address: addrIn.value.trim() || undefined,
@@ -1015,7 +1020,7 @@ async function viewAccount() {
       el('button', { class: 'btn primary', type: 'submit' }, 'Save profile'),
       el('button', {
         class: 'btn', type: 'button',
-        onclick: async () => { await api('POST', '/api/customer/logout', {}); state.customer = null; state.unread = 0; if (state.sse) state.sse.close(); renderHeader(); location.hash = '#/'; toast('Signed out.'); },
+        onclick: async () => { await api('POST', '/customer/logout', {}); state.customer = null; state.unread = 0; if (state.sse) state.sse.close(); renderHeader(); location.hash = '#/'; toast('Signed out.'); },
       }, 'Sign out'),
     ));
 
@@ -1032,8 +1037,8 @@ async function viewAccount() {
             el('div', { class: 'muted', style: 'font-size:13px' }, `${ad.address}, ${ad.city || 'New Delhi'} ${ad.pincode}`),
           ),
           el('div', { class: 'row' },
-            !ad.is_default ? el('button', { class: 'btn sm', type: 'button', onclick: async () => { await api('PATCH', `/api/customer/addresses/${ad.id}`, { is_default: true }); viewAccount(); } }, 'Make default') : null,
-            el('button', { class: 'btn sm', type: 'button', onclick: async () => { await api('DELETE', `/api/customer/addresses/${ad.id}`); viewAccount(); } }, 'Remove'),
+            !ad.is_default ? el('button', { class: 'btn sm', type: 'button', onclick: async () => { await api('PATCH', `/customer/addresses/${ad.id}`, { is_default: true }); viewAccount(); } }, 'Make default') : null,
+            el('button', { class: 'btn sm', type: 'button', onclick: async () => { await api('DELETE', `/customer/addresses/${ad.id}`); viewAccount(); } }, 'Remove'),
           ),
         ))
         : [el('p', { class: 'muted', style: 'font-size:13px' }, 'No saved addresses yet.')]),
@@ -1042,7 +1047,7 @@ async function viewAccount() {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
-            await api('POST', '/api/customer/addresses', { label: newLabel.value.trim() || 'Home', address: newAddr.value.trim(), pincode: newPin.value.trim(), is_default: true });
+            await api('POST', '/customer/addresses', { label: newLabel.value.trim() || 'Home', address: newAddr.value.trim(), pincode: newPin.value.trim(), is_default: true });
             toast('Address added.', 'ok');
             viewAccount();
           } catch (err) { toast(err.message, 'bad'); }
@@ -1067,7 +1072,7 @@ async function viewAccount() {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
-            const res = await api('POST', '/api/customer/change-password', { current_password: curPw.value, new_password: newPw.value });
+            const res = await api('POST', '/customer/change-password', { current_password: curPw.value, new_password: newPw.value });
             toast(res.message, 'ok');
             curPw.value = ''; newPw.value = '';
           } catch (err) { toast(err.message, 'bad'); }
@@ -1083,7 +1088,7 @@ async function viewAccount() {
           el('strong', { style: 'font-size:13px' }, `Active sessions (${sessRes.sessions.length})`),
           sessRes.sessions.length > 1 ? el('button', {
             class: 'btn sm', type: 'button',
-            onclick: async () => { await api('POST', '/api/customer/sessions/revoke-others', {}); toast('Signed out other devices.', 'ok'); viewAccount(); },
+            onclick: async () => { await api('POST', '/customer/sessions/revoke-others', {}); toast('Signed out other devices.', 'ok'); viewAccount(); },
           }, 'Sign out other devices') : null,
         ),
         ...sessRes.sessions.map((s) => el('div', { class: 'muted', style: 'font-size:12px;padding:4px 0' },
@@ -1101,21 +1106,26 @@ async function viewAccount() {
 }
 
 /* ---------- Auth Screens (Login, Register, Forgot/Reset Password) ---------- */
+// One demo customer is seeded with the marketplace outside production, so the sign-in page offers it as a one-tap demo.
+const DEMO_CUSTOMER = { email: 'customer@nearbuy.demo', password: 'Customer123!' };
 function viewLogin(nextHash = '/') {
   const emailIn = el('input', { type: 'email', required: true, autocomplete: 'email', placeholder: 'you@example.com' });
   const pwIn = el('input', { type: 'password', required: true, autocomplete: 'current-password', placeholder: 'Your password' });
   const errBox = el('div');
-
+  const submit = async (email, password) => {
+    errBox.replaceChildren();
+    try {
+      await api('POST', '/customer/login', { email, password });
+      await refreshSession();
+      toast('Welcome back to NearBuy!', 'ok');
+      location.hash = `#${nextHash.startsWith('/') ? nextHash : '/'}`;
+    } catch (err) { errBox.replaceChildren(el('div', { class: 'banner bad', style: 'margin-bottom:12px' }, err.message)); }
+  };
   const form = el('form', {
     class: 'auth__card',
     onsubmit: async (e) => {
-      e.preventDefault(); errBox.replaceChildren();
-      try {
-        await api('POST', '/api/customer/login', { email: emailIn.value.trim(), password: pwIn.value });
-        await refreshSession();
-        toast('Welcome back to NearBuy!', 'ok');
-        location.hash = `#${nextHash.startsWith('/') ? nextHash : '/'}`;
-      } catch (err) { errBox.replaceChildren(el('div', { class: 'banner bad', style: 'margin-bottom:12px' }, err.message)); }
+      e.preventDefault();
+      await submit(emailIn.value.trim(), pwIn.value);
     },
   },
   el('h1', {}, 'Sign in to NearBuy'),
@@ -1124,13 +1134,17 @@ function viewLogin(nextHash = '/') {
   el('div', { class: 'field' }, el('label', {}, 'Email address'), emailIn),
   el('div', { class: 'field' }, el('label', {}, 'Password'), pwIn),
   el('button', { class: 'btn primary block', type: 'submit' }, 'Sign in'),
+  el('button', {
+    class: 'btn block', type: 'button', style: 'margin-top:10px',
+    onclick: async () => { emailIn.value = DEMO_CUSTOMER.email; pwIn.value = DEMO_CUSTOMER.password; await submit(DEMO_CUSTOMER.email, DEMO_CUSTOMER.password); },
+  }, 'Sign in with the demo customer'),
   el('div', { class: 'auth__alt' },
     el('a', { href: '#/forgot-password' }, 'Forgot password?'),
     ' · ',
     el('a', { href: `#/register?next=${encodeURIComponent(nextHash)}` }, 'Create a new account'),
   ),
   el('div', { class: 'banner', style: 'margin-top:16px;font-size:12px;color:var(--muted)' },
-    el('strong', {}, 'Optional demo account: '), 'customer@nearbuy.demo / Customer123! (or register your own real account above).'));
+    el('strong', {}, 'Optional demo account: '), `${DEMO_CUSTOMER.email} / ${DEMO_CUSTOMER.password} — the button above fills it in and signs in for you. You can register your own real account instead.`));
   renderShell(el('div', { class: 'auth' }, form));
 }
 
@@ -1148,7 +1162,7 @@ function viewRegister(nextHash = '/') {
     onsubmit: async (e) => {
       e.preventDefault(); errBox.replaceChildren();
       try {
-        await api('POST', '/api/customer/register', {
+        await api('POST', '/customer/register', {
           name: nameIn.value.trim(), email: emailIn.value.trim(), password: pwIn.value,
           mobile: mobIn.value.trim() || undefined, pincode: pinIn.value.trim() || undefined, address: addrIn.value.trim() || undefined,
         });
@@ -1182,7 +1196,7 @@ function viewForgotPassword() {
     onsubmit: async (e) => {
       e.preventDefault(); msgBox.replaceChildren();
       try {
-        const res = await api('POST', '/api/customer/forgot-password', { email: emailIn.value.trim() });
+        const res = await api('POST', '/customer/forgot-password', { email: emailIn.value.trim() });
         msgBox.replaceChildren(el('div', { class: 'banner ok', style: 'margin-bottom:12px' },
           res.message,
           res.reset_token ? el('div', { style: 'margin-top:8px' }, el('a', { href: `#/reset-password?token=${encodeURIComponent(res.reset_token)}` }, 'Continue with dev reset token →')) : null));
@@ -1208,7 +1222,7 @@ function viewResetPassword(qs) {
     onsubmit: async (e) => {
       e.preventDefault(); msgBox.replaceChildren();
       try {
-        const res = await api('POST', '/api/customer/reset-password', { token: tokIn.value.trim(), password: pwIn.value });
+        const res = await api('POST', '/customer/reset-password', { token: tokIn.value.trim(), password: pwIn.value });
         toast(res.message, 'ok');
         location.hash = '#/login';
       } catch (err) { msgBox.replaceChildren(el('div', { class: 'banner bad', style: 'margin-bottom:12px' }, err.message)); }

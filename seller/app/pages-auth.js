@@ -16,9 +16,12 @@ function mailNotice(result, mail, purpose) {
 export async function login(ctx) {
   let config = { demo: null };
   try { config = await api('/public-config'); } catch { /* optional */ }
+  // The sign-in page is the first thing anyone opens, so the form starts pre-filled with the demo account when the
+  // server offers one. Typing replaces it; real accounts still work exactly as before.
+  const demo = config.demo;
   const form = h('form.stack', h('div', { dataset: { formError: '' } }),
-    field({ name: 'email', label: 'Email address', type: 'email', required: true, placeholder: 'you@business.com', autocomplete: 'username' }),
-    field({ name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'current-password' }),
+    field({ name: 'email', label: 'Email address', type: 'email', required: true, placeholder: 'you@business.com', autocomplete: 'username', value: demo ? demo.email : '' }),
+    field({ name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'current-password', value: demo ? demo.password : '' }),
     h('div.row.between', h('label.check', h('input', { type: 'checkbox', name: 'remember', checked: true }), h('span', 'Keep me signed in for 30 days')), h('a.small', { href: '/seller/forgot-password' }, 'Forgot password?')),
     h('button.btn.primary.lg.block', { type: 'submit' }, 'Sign in'));
   onSubmit(form, async (values) => {
@@ -35,10 +38,10 @@ export async function login(ctx) {
     state.shell = null;
     navigate(safeNext(ctx.query.next) || '/seller/dashboard', { replace: true });
   });
-  const demo = config.demo ? h('div.banner.demo', { style: { marginTop: '16px' } }, icon('info'), h('div.grow', h('b', 'Demo store available. '), 'A sample seller account filled with DEMO DATA exists on this server. ',
-    h('button.link-btn', { type: 'button', onClick: () => { form.elements.email.value = config.demo.email; form.elements.password.value = config.demo.password; form.elements.password.focus(); } }, 'Fill in the demo sign-in'),
-    h('div.tiny', { style: { marginTop: '4px' } }, `${config.demo.email} · ${config.demo.password}`))) : null;
-  return h('div', h('h1', 'Sign in to Seller Hub'), h('p.lead', 'Manage your NearBuy store, orders and payments.'), form, demo,
+  const demoBanner = demo ? h('div.banner.demo', { style: { marginTop: '16px' } }, icon('info'), h('div.grow', h('b', 'Demo store ready. '), 'A sample seller account filled with DEMO DATA exists on this server. Its sign-in is already filled in above — just press Sign in. ',
+    h('button.link-btn', { type: 'button', onClick: () => { form.elements.email.value = demo.email; form.elements.password.value = demo.password; form.elements.password.focus(); } }, 'Fill the demo sign-in again'),
+    h('div.tiny', { style: { marginTop: '4px' } }, `${demo.email} · ${demo.password}`))) : null;
+  return h('div', h('h1', 'Sign in to Seller Hub'), h('p.lead', 'Manage your NearBuy store, orders and payments.'), form, demoBanner,
     h('p.auth-foot', 'New to NearBuy? ', h('a', { href: '/seller/register' }, 'Create a seller account')));
 }
 

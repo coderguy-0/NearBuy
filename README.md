@@ -27,7 +27,17 @@ The server creates one sample store, **Green Basket Market**, the first time it 
 | Inventory manager | `stock@nearbuy.demo` | `Team123!` | Stock and warehouses; orders read-only |
 | Finance viewer | `finance@nearbuy.demo` | `Team123!` | Payments, orders, returns and analytics, read-only |
 
-The sign-in page also offers a *Fill in the demo sign-in* shortcut. To start again from a clean sample store, stop the server, delete the `data/` folder and start it again.
+Every sign-in page opens with its demo account **already filled in**, and each one has a single **one-tap demo button** that signs in without typing:
+
+| Portal | Where | One-tap demo |
+| --- | --- | --- |
+| Customer storefront | `/customer/#/login` | *Sign in with the demo customer* |
+| Seller Hub | `/seller/login` | details pre-filled — press **Sign in** |
+| Delivery partner app | `/runner/` | *Sign in with the demo partner* |
+| Control tower | `/control-tower/` | *Sign in with the demo administrator* |
+| Fleet portal | `/fleet/` | *Sign in with the demo fleet* |
+
+The public homepage's portal chooser (`Choose your portal` → *Sign in as demos*) links to all of them. To start again from a clean sample store, stop the server, delete the `data/` folder and start it again.
 
 **If a demo sign-in returns you to the form:** the browser is not keeping the session cookie. The usual cause is viewing the Seller Hub inside another site's frame (hosted previews do this). Outside production the server therefore issues the cookie as `SameSite=None; Secure; Partitioned` over HTTPS, which works both framed and in its own tab; the form also explains the problem and links to a standalone tab if the cookie is still refused. The other cause is running a static file server (`npm run start:static`) instead of `npm start` — the pages load but there is no API to sign in to.
 

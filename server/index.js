@@ -3,6 +3,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { ROOT, HttpError } = require('./lib');
 const { match } = require('./router');
 const { resolveSession, can } = require('./auth');
@@ -173,12 +174,36 @@ async function handleApi(req, res, url) {
   }
 }
 
-function sendFile(res, file, extraHeaders, method) {
+// Text assets are gzipped in memory once and reused. Without this the public pages ship ~900 KB of JS/CSS per visit,
+// which is what makes a slow connection feel like a site that "is not responding".
+const GZIP_EXT = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.txt', '.md', '.csv']);
+const gzipCache = new Map();
+function gzipped(file, stat) {
+  const hit = gzipCache.get(file);
+  if (hit && hit.mtime === stat.mtimeMs && hit.size === stat.size) return hit.body;
+  const body = zlib.gzipSync(fs.readFileSync(file), { level: 9 });
+  gzipCache.set(file, { mtime: stat.mtimeMs, size: stat.size, body });
+  if (gzipCache.size > 200) gzipCache.delete(gzipCache.keys().next().value);
+  return body;
+}
+function sendFile(res, file, extraHeaders, method, req) {
   fs.stat(file, (err, stat) => {
     if (err || !stat.isFile()) { notFoundPage(res); return; }
     const ext = path.extname(file).toLowerCase();
     const cache = ext === '.woff2' ? 'public, max-age=31536000, immutable' : /\.(png|jpe?g|webp|ico|svg)$/.test(ext) ? 'public, max-age=3600' : 'no-cache';
-    res.writeHead(200, baseHeaders({ 'Content-Type': MIME[ext] || 'application/octet-stream', 'Content-Length': stat.size, 'Cache-Control': cache, ...extraHeaders }));
+    const headers = baseHeaders({ 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': cache, ...extraHeaders });
+    const wantsGzip = req && /\bgzip\b/.test(String(req.headers['accept-encoding'] || '')) && GZIP_EXT.has(ext) && stat.size > 1024;
+    if (wantsGzip) {
+      const body = gzipped(file, stat);
+      headers['Content-Encoding'] = 'gzip';
+      headers.Vary = 'Accept-Encoding';
+      headers['Content-Length'] = body.length;
+      res.writeHead(200, headers);
+      if (method === 'HEAD') res.end(); else res.end(body);
+      return;
+    }
+    headers['Content-Length'] = stat.size;
+    res.writeHead(200, headers);
     if (method === 'HEAD') res.end(); else fs.createReadStream(file).pipe(res);
   });
 }
@@ -199,20 +224,21 @@ function handleStatic(req, res, url) {
   if (segments[0] === 'customer') {
     const candidate = path.join(ROOT, ...segments);
     if (segments.length > 1 && candidate.startsWith(ROOT) && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      sendFile(res, candidate, { 'Content-Security-Policy': SPA_CSP }, req.method);
+      sendFile(res, candidate, { 'Content-Security-Policy': SPA_CSP }, req.method, req);
       return;
     }
     if (segments.length === 2 && segments[1] === 'login') {
-      res.writeHead(302, baseHeaders({ Location: '/customer/#/login' }));
+      // Keep the hash a caller may have sent (e.g. #/login?next=…) so a sign-in link never loses its destination.
+      res.writeHead(302, baseHeaders({ Location: `/customer/${url.search}#/login` }));
       res.end();
       return;
     }
-    sendFile(res, path.join(ROOT, 'customer', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method);
+    sendFile(res, path.join(ROOT, 'customer', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method, req);
     return;
   }
   // Seller Hub single-page app: every /seller/... URL that is not a static asset opens the app shell.
   if (segments[0] === 'seller' && segments[1] !== 'app') {
-    sendFile(res, path.join(ROOT, 'seller', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method);
+    sendFile(res, path.join(ROOT, 'seller', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method, req);
     return;
   }
   const file = path.join(ROOT, ...segments);
@@ -222,10 +248,10 @@ function handleStatic(req, res, url) {
   fs.stat(file, (err, stat) => {
     if (!err && stat.isDirectory()) {
       if (!pathname.endsWith('/')) { res.writeHead(301, { Location: `${pathname}/${url.search}` }); res.end(); return; }
-      sendFile(res, path.join(file, 'index.html'), csp, req.method);
+      sendFile(res, path.join(file, 'index.html'), csp, req.method, req);
       return;
     }
-    sendFile(res, file, csp, req.method);
+    sendFile(res, file, csp, req.method, req);
   });
 }
 
@@ -238,11 +264,30 @@ const server = http.createServer((req, res) => {
   else handleStatic(req, res, url);
 });
 
+// Compress the site's own JS/CSS/HTML before the first visitor arrives, so the very first page load is as fast as the rest.
+function warmAssetCache() {
+  const skip = new Set([...BLOCKED_TOP, '.git']);
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (GZIP_EXT.has(path.extname(entry.name).toLowerCase())) {
+        try { const stat = fs.statSync(full); if (stat.size > 1024) gzipped(full, stat); } catch { /* optional */ }
+      }
+    }
+  };
+  const started = Date.now();
+  try { walk(ROOT); } catch { /* optional */ }
+  console.log(`[nearbuy] Pre-compressed ${gzipCache.size} text assets in ${Date.now() - started} ms (gzip).`);
+}
+
 function start(port = PORT) {
   seedIfNeeded();
   delivery.seedDelivery();
   seedMarketplace();
   delivery.startBackground();
+  warmAssetCache();
   return new Promise((resolve) => {
     server.listen(port, HOST, () => {
       const actual = server.address().port;

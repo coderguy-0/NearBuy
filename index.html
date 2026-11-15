@@ -7,9 +7,7 @@
   <meta name="description" content="NearBuy — Your neighbourhood, everything you need. Discover local shops, order everyday essentials with local pickup or NearBuy Runner delivery, and join as a seller or delivery partner." />
   <title>NearBuy — Your Neighbourhood. Everything You Need.</title>
   <link rel="icon" href="/public/assets/nearbuy-logo.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
+    <!-- Brand fonts are self-hosted (see home.css); nothing here waits on a third-party font host. -->
   <link rel="preload" as="image" href="/public/assets/hero-neighbourhood.jpg" fetchpriority="high" />
   <link rel="stylesheet" href="/home.css" />
   <script>
@@ -219,7 +217,7 @@
               </ul>
               <div class="portal-card__cta">
                 <a class="btn btn--primary btn--sm" href="/customer/">Shop now <svg class="ic ic--arrow"><use href="#i-arrow"/></svg></a>
-                <a class="btn btn--ghost btn--sm" href="/customer/login/">Sign in</a>
+                <a class="btn btn--ghost btn--sm" href="/customer/#/login">Sign in</a>
               </div>
               <a class="learn" href="#previews" data-tab-jump="customer">Learn more <svg class="ic"><use href="#i-arrow-up"/></svg></a>
             </div>
@@ -858,7 +856,7 @@
           <span class="chooser__icon chooser__icon--orange"><svg class="ic"><use href="#i-bag"/></svg></span>
           <div class="chooser__text"><b>Customer</b><small>Shop nearby shops and track orders</small></div>
           <div class="chooser__actions">
-            <a class="btn btn--ghost btn--sm" href="/customer/login/">Sign in</a>
+            <a class="btn btn--ghost btn--sm" href="/customer/#/login">Sign in</a>
             <a class="btn btn--primary btn--sm" href="/customer/">Shop now</a>
           </div>
         </div>
@@ -880,7 +878,16 @@
         </div>
       </div>
 
-      <p class="chooser__note"><svg class="ic"><use href="#i-shield"/></svg> Demo accounts open instantly — verification and registration steps are simulated.</p>
+      <p class="chooser__note"><svg class="ic"><use href="#i-shield"/></svg> Demo accounts open instantly — each sign-in page is pre-filled with a working demo account, or press the one-tap demo button. Verification and registration steps are simulated.</p>
+      <div class="chooser__demo">
+        <p>Every portal opens with its demo account already filled in — or sign in with one tap.</p>
+        <div class="chooser__demo-row">
+          <button class="btn btn--primary btn--sm" type="button" data-demo-signin="shop">Open the demo customer</button>
+          <button class="btn btn--ghost btn--sm" type="button" data-demo-signin="seller">Demo seller</button>
+          <button class="btn btn--ghost btn--sm" type="button" data-demo-signin="runner">Demo runner</button>
+          <button class="btn btn--ghost btn--sm" type="button" data-demo-signin="ops">Demo operations</button>
+        </div>
+      </div>
     </div>
   </div>
 

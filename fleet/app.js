@@ -48,7 +48,10 @@ async function pageLogin() {
     heroPoints: ['Roster, documents and online status for every member', 'Live assignments without exposing customer details', 'Monthly settlement and invoice reports'],
     heroChips: ['Fleet join code', 'Member performance', 'Invoice reports'] },
     h('div', { class: 'card stack' }, f,
-      demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample fleet (demo data) is available.'), btn('Fill demo fleet sign-in', () => { f.controls.email.value = demo.fleet.email; f.controls.password.value = demo.fleet.password; }, 'sm yellow')) : null)));
+      demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample fleet (demo data) is available.'), btn('Sign in with the demo fleet', () => {
+        f.controls.email.value = demo.fleet.email; f.controls.password.value = demo.fleet.password;
+        f.requestSubmit ? f.requestSubmit() : f.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      }, 'sm yellow')) : null)));
 }
 const deliveryCols = [{ label: 'Delivery', render: (x) => h('div', null, h('strong', null, x.code), ' ', demoTag(x.is_demo), h('div', { class: 'small muted' }, x.category_label)) }, { label: 'Status', render: (x) => statusBadge(x.status, x.status_label) }, { label: 'Member', render: (x) => (x.partner ? `${x.partner.first_name} · ${x.partner.code}` : '—') },
   { label: 'Route', render: (x) => `${x.pickup_name} → ${x.drop_area}` }, { label: 'Distance', render: (x) => `${x.distance_km} km` }, { label: 'Earning', right: true, render: (x) => money(x.earning) }, { label: 'When', render: (x) => dt(x.completed_at || x.assigned_at || x.created_at) }];

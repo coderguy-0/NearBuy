@@ -57,7 +57,10 @@ async function pageLogin() {
     heroPoints: ['Live map of every delivery and partner on shift', 'Approve partners, verify documents and adjust zones', 'Settlements, cash reconciliation and audit trail'],
     heroChips: ['Live updates', 'Audited actions', 'Zone-level control'] },
     h('div', { class: 'card stack' }, h('div', { class: 'banner brand' }, icon('shield'), h('div', { class: 'grow' }, h('b', null, 'Staff access only. '), 'Sign in with the work email issued by the network team.')), f,
-      demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample administrator (demo data) is available.'), btn('Fill demo administrator sign-in', () => { f.controls.email.value = demo.admin.email; f.controls.password.value = demo.admin.password; }, 'sm yellow')) : null)));
+      demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample administrator (demo data) is available.'), btn('Sign in with the demo administrator', () => {
+        f.controls.email.value = demo.admin.email; f.controls.password.value = demo.admin.password;
+        f.requestSubmit ? f.requestSubmit() : f.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      }, 'sm yellow')) : null)));
 }
 
 /* ---------- Dashboard ---------- */
