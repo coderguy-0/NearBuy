@@ -1,16 +1,38 @@
-// Routely Control Tower — operations, verification, zones, finance and support for the delivery network.
-import { h, mount, api, act, money, dt, day, clock, ago, pct, val, title, badge, statusBadge, demoTag, spinner, empty, note, stat, card, kv, btn, brand, table, timeline, tabs, pager, toast, modal, form, formModal, confirmModal, currentRoute, go, onRoute, live, plot, plotLegend } from '/delivery/kit.js';
+// NearBuy Delivery control tower — operations, verification, zones, finance and support for the delivery network.
+import { h, mount, api, act, money, dt, day, clock, ago, pct, val, title, badge, statusBadge, demoTag, spinner, empty, note, stat, card, kv, btn, brand, authShell, icon, table, timeline, tabs, pager, toast, modal, form, formModal, confirmModal, currentRoute, go, onRoute, live, plot, plotLegend } from '/delivery/kit.js';
 
 const root = document.getElementById('app');
 const S = { me: null, refresh: null, publicConfig: null };
-const NAV = [['/', 'Dashboard'], ['/map', 'Live map'], ['/deliveries', 'Deliveries'], ['/partners', 'Partners'], ['/zones', 'Zones & pricing'], ['/finance', 'Finance'], ['/support', 'Support'], ['/reports', 'Reports'], ['/fleets', 'Fleets'], ['/audit', 'Audit log']];
+const NAV = [
+  { group: 'Operate', items: [['/', 'Dashboard', 'dashboard'], ['/map', 'Live map', 'map'], ['/deliveries', 'Deliveries', 'deliveries'], ['/partners', 'Partners', 'partners']] },
+  { group: 'Network', items: [['/zones', 'Zones & pricing', 'zones'], ['/fleets', 'Fleets', 'fleets']] },
+  { group: 'Business', items: [['/finance', 'Finance', 'finance'], ['/support', 'Support', 'support'], ['/reports', 'Reports', 'reports'], ['/audit', 'Audit log', 'audit']] },
+];
 const qs = (o) => { const p = new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '')); const s = p.toString(); return s ? `?${s}` : ''; };
 
 function shell(active, heading, actions, ...body) {
+  const crumb = [...NAV.flatMap((g) => g.items)].find(([p]) => p === active);
+  const links = [];
   mount(root, h('div', { class: 'desk' },
-    h('aside', { class: 'side' }, brand('Control tower'), NAV.map(([path, label]) => h('a', { class: 'nav', href: `#${path}`, 'aria-current': active === path ? 'page' : null }, label, path === '/' && S.me.unread ? h('span', { class: 'pill' }, S.me.unread) : null)),
-      h('div', { class: 'foot' }, h('span', null, S.me.user.name), h('button', { type: 'button', onclick: async () => { await api('/api/tower/logout', { method: 'POST' }).catch(() => {}); S.me = null; render(); } }, 'Sign out'))),
-    h('main', { class: 'main stack' }, h('div', { class: 'head' }, h('h1', null, heading), h('div', { class: 'row' }, actions)), ...body)));
+    h('aside', { class: 'side', id: 'tower-sidebar' },
+      h('div', { class: 'side-head' }, brand('Control tower', '#/', { badge: true })),
+      h('nav', { class: 'side-nav', 'aria-label': 'Control tower sections' }, NAV.map((group) => [
+        h('div', { class: 'nav-group' }, group.group),
+        group.items.map(([path, label, ic]) => { const a = h('a', { class: 'nav', href: `#${path}`, title: label }, icon(ic), h('span', null, label), path === '/' && S.me.unread ? h('span', { class: 'pill' }, S.me.unread) : null); links.push([path, a]); return a; }),
+      ])),
+      h('div', { class: 'foot' },
+        h('div', { class: 'who' }, h('span', { class: 'avatar navy' }, (S.me.user.name || '?').trim().charAt(0).toUpperCase()), h('div', { class: 'grow' }, h('b', null, S.me.user.name), h('small', null, S.me.user.email))),
+        h('button', { type: 'button', onclick: async () => { await api('/api/tower/logout', { method: 'POST' }).catch(() => {}); S.me = null; render(); } }, 'Sign out'))),
+    h('div', { class: 'main' },
+      h('header', { class: 'topbar' },
+        h('div', { class: 'crumbs', style: 'margin:0' }, h('span', null, 'Control tower'), icon('arrow-right', 'sm'), h('span', null, crumb ? crumb[1] : heading)),
+        h('a', { class: 'icon-btn bordered', href: '#/', 'aria-label': 'Dashboard' }, icon('dashboard')),
+        h('a', { class: 'icon-btn bordered', href: '/track/', target: '_blank', rel: 'noopener', 'aria-label': 'Open order tracking page' }, icon('external'))),
+      h('div', { class: 'wrap stack' }, h('div', { class: 'head' }, h('div', null, h('h1', null, heading), heading !== 'Dashboard' ? h('div', { class: 'sub' }, `Live operations · updated ${clock(new Date().toISOString())}`) : null), h('div', { class: 'actions' }, actions)), ...body),
+      h('div', { class: 'footer-note' }, 'NearBuy Delivery control tower · Every action in this portal is recorded in the audit log · Sample records are labelled DEMO'))));
+  for (const [path, a] of links) { if (path === active) { a.setAttribute('aria-current', 'page'); } }
+  // keep the most specific match highlighted
+  if (active === '/') { const home = links.find(([p]) => p === '/'); if (home) home[1].setAttribute('aria-current', 'page'); }
 }
 const busy = (active, heading) => shell(active, heading, null, spinner());
 const oops = (active, heading, e, retry) => shell(active, heading, null, h('div', { class: 'card bad stack' }, h('p', null, e.message), btn('Try again', retry)));
@@ -26,21 +48,37 @@ async function pageLogin() {
   if (!S.publicConfig) S.publicConfig = await api('/api/delivery/public-config').catch(() => ({}));
   const demo = S.publicConfig.demo;
   const f = form([{ name: 'email', label: 'Work email', type: 'email', required: true, autocomplete: 'username' }, { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'current-password' }],
-    { submit: 'Sign in', onSubmit: async (v) => { await api('/api/tower/login', { method: 'POST', body: v }); await boot(); } });
-  mount(root, h('div', { class: 'auth' }, h('div', { class: 'panel stack' }, brand('Control tower'), h('div', { class: 'card stack' }, h('h1', null, 'Operations sign in'), h('p', { class: 'muted' }, 'For authorised operations and verification staff only. Every action is recorded.'), f,
-    demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample administrator (demo data) is available.'), btn('Fill demo administrator sign-in', () => { f.controls.email.value = demo.admin.email; f.controls.password.value = demo.admin.password; }, 'sm')) : null))));
+    { submit: 'Sign in to the control tower', onSubmit: async (v) => { await api('/api/tower/login', { method: 'POST', body: v }); await boot(); } });
+  mount(root, authShell({ sub: 'Control tower', heading: 'Operations sign in',
+    lead: 'For authorised operations and verification staff only. Every action is recorded.',
+    heroTitle: ['Run the ', h('em', null, 'whole network'), ' from one tower.'],
+    heroLead: 'Live deliveries, dispatch, partner verification, zones, fees and payments — one screen, updated every second.',
+    heroPoints: ['Live map of every delivery and partner on shift', 'Approve partners, verify documents and adjust zones', 'Settlements, cash reconciliation and audit trail'],
+    heroChips: ['Live updates', 'Audited actions', 'Zone-level control'] },
+    h('div', { class: 'card stack' }, h('div', { class: 'banner brand' }, icon('shield'), h('div', { class: 'grow' }, h('b', null, 'Staff access only. '), 'Sign in with the work email issued by the network team.')), f,
+      demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample administrator (demo data) is available.'), btn('Fill demo administrator sign-in', () => { f.controls.email.value = demo.admin.email; f.controls.password.value = demo.admin.password; }, 'sm yellow')) : null)));
 }
 
 /* ---------- Dashboard ---------- */
 function pageDashboard(silent) {
   S.refresh = () => pageDashboard(true);
-  return page('/', 'Dashboard', () => api('/api/admin/dashboard'), (d) => shell('/', 'Dashboard', h('span', { class: 'small muted' }, `Live · updated ${clock(new Date().toISOString())}`),
-    h('div', { class: 'grid g4' }, stat('Deliveries today', d.today.total, `${d.today.completed} completed`), stat('Active now', d.active), stat('Waiting for a partner', d.pending_assignment), stat('Delayed', d.delayed, 'More than 10 min past ETA'),
-      stat('Partners online', d.partners.online, `${d.partners.offline} offline`), stat('Applications to review', d.partners.pending_review), stat('Failed attempts today', d.today.failed_attempts), stat('Delivery fees today', money(d.today.fee_revenue)),
-      stat('Average delivery time', val(d.week.average_delivery_minutes, ' min'), 'Last 7 days, from ready to delivered'), stat('Success rate', pct(d.week.success_rate), `${d.week.closed} closed in 7 days`), stat('Open settlements', d.settlements.open, `${money(d.settlements.partner_earnings_unsettled)} partner earnings`), stat('Cash with partners', money(d.settlements.cod_with_partners))),
-    h('div', { class: 'row' }, h('a', { class: 'btn', href: '#/deliveries?tab=unassigned' }, 'Unassigned deliveries'), h('a', { class: 'btn', href: '#/partners?tab=applications' }, 'Partner applications'), h('a', { class: 'btn', href: '#/support' }, `Open tickets (${d.open_tickets})`), d.open_incidents ? h('a', { class: 'btn danger', href: '#/support?view=incidents' }, `Open incidents (${d.open_incidents})`) : null),
+  return page('/', 'Dashboard', () => api('/api/admin/dashboard'), (d) => shell('/', 'Dashboard',
+    [h('span', { class: 'badge ok' }, 'Live'), btn('Refresh', () => pageDashboard(true), 'sm')],
+    h('div', { class: 'grid g4' },
+      stat('Deliveries today', d.today.total, `${d.today.completed} completed`, 'dark'), stat('Active now', d.active, 'On the road right now', 'tinted'),
+      stat('Waiting for a partner', d.pending_assignment, d.pending_assignment ? 'Needs dispatch attention' : 'All assigned'), stat('Delayed', d.delayed, 'More than 10 min past ETA', d.delayed ? 'yellow' : ''),
+      stat('Partners online', d.partners.online, `${d.partners.offline} offline`), stat('Applications to review', d.partners.pending_review, 'Waiting for verification', d.partners.pending_review ? 'tinted' : ''),
+      stat('Failed attempts today', d.today.failed_attempts), stat('Delivery fees today', money(d.today.fee_revenue), 'Revenue on completed deliveries')),
+    h('div', { class: 'grid g4' }, stat('Average delivery time', val(d.week.average_delivery_minutes, ' min'), 'Last 7 days, ready to delivered'), stat('Success rate', pct(d.week.success_rate), `${d.week.closed} closed in 7 days`),
+      stat('Open settlements', d.settlements.open, `${money(d.settlements.partner_earnings_unsettled)} partner earnings`), stat('Cash with partners', money(d.settlements.cod_with_partners), 'To reconcile', d.settlements.cod_with_partners ? 'yellow' : '')),
+    h('div', { class: 'card flat row', style: 'padding:12px 14px' },
+      h('span', { class: 'small muted strong' }, 'Quick actions'),
+      h('a', { class: 'btn sm', href: '#/deliveries?tab=unassigned' }, icon('deliveries', 'sm'), 'Unassigned deliveries'),
+      h('a', { class: 'btn sm', href: '#/partners?tab=applications' }, icon('partners', 'sm'), 'Partner applications'),
+      h('a', { class: 'btn sm', href: '#/support' }, icon('support', 'sm'), `Open tickets (${d.open_tickets})`),
+      d.open_incidents ? h('a', { class: 'btn sm danger', href: '#/support?view=incidents' }, icon('alert', 'sm'), `Open incidents (${d.open_incidents})`) : null),
     card(h('div', { class: 'row between' }, h('h2', null, 'Alerts'), S.me.unread ? btn('Mark all read', async (b) => { await act(b, () => api('/api/admin/notifications/read', { method: 'POST' })); S.me.unread = 0; pageDashboard(true); }, 'sm') : null),
-      d.alerts.length ? h('ol', { class: 'tl' }, d.alerts.map((n) => h('li', null, h('div', { class: 't1' }, n.delivery_code ? h('a', { href: `#/deliveries/${n.delivery_code}` }, n.title) : n.title, n.read_at ? null : [' ', badge('New', 'info')]), h('div', { class: 't2' }, [ago(n.created_at), n.body].filter(Boolean).join(' · '))))) : empty('No alerts.'))), silent);
+      d.alerts.length ? h('ol', { class: 'tl' }, d.alerts.map((n) => h('li', { class: n.read_at ? '' : 'done' }, h('div', { class: 't1' }, n.delivery_code ? h('a', { href: `#/deliveries/${n.delivery_code}` }, n.title) : n.title, n.read_at ? null : [' ', badge('New', 'info')]), h('div', { class: 't2' }, [ago(n.created_at), n.body].filter(Boolean).join(' · '))))) : empty('No alerts.', 'bell'))), silent);
 }
 
 /* ---------- Live map ---------- */

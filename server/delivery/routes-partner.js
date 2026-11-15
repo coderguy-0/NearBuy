@@ -326,6 +326,7 @@ P('GET', '/api/partners/home', (ctx) => {
     today: { completed: completedBetween(p.id, from, to), earnings: earningsBetween(p.id, from, to).total },
     active: p.status === 'approved' && active ? V.forPartner(active) : null, offer: p.status === 'approved' ? liveOffer(p.id) : null,
     location: p.last_location_at ? { lat: p.last_lat, lng: p.last_lng, at: p.last_location_at } : null, cash_in_hand: E.cashInHand(p.id),
+    rating: p.rating_count ? r2(p.rating_sum / p.rating_count) : null, wallet_available: wallet(p.id).available,
     unread_notifications: get("SELECT COUNT(*) AS n FROM delivery_notifications WHERE audience = 'partner' AND partner_id = ? AND read_at IS NULL", p.id).n,
     notifications: all("SELECT id, type, title, body, read_at, created_at FROM delivery_notifications WHERE audience = 'partner' AND partner_id = ? ORDER BY id DESC LIMIT 5", p.id),
   };

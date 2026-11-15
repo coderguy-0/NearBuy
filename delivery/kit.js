@@ -1,5 +1,30 @@
 // Shared interface kit for the delivery network apps. No framework, no build step, no inline scripts.
+// Visual language: the NearBuy Seller Hub layout system with a Porter-style blue/yellow delivery identity.
 import '/delivery/session.js';
+export const ICONS = {
+  home: 'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10', tasks: 'M4 7h16v12H4zM8 7V4h8v3M4 12h16', earn: 'M4 6h16v12H4zM12 9v6M9.5 10.5h3.2a1.3 1.3 0 0 1 0 2.6h-1.4a1.3 1.3 0 0 0 0 2.6h3.2',
+  perf: 'M4 19V9M10 19V5M16 19v-7M21 19H3', help: 'M12 21a9 9 0 1 0-9-9c0 1.6.4 3 1.1 4.3L3 21l4.8-1.1A9 9 0 0 0 12 21zM9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.4-1.1.9-1.1 1.7M12 16.3v.2', me: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20a7.5 7.5 0 0 1 15 0',
+  dashboard: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z', map: 'M9 4 3 6.5v14L9 18l6 2.5 6-2.5v-14L15 6.5zM9 4v14M15 6.5v14',
+  deliveries: 'M2 6h11v10H2zM13 9h4.5l3.5 3.5V16h-8zM6.5 19.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM17 19.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
+  partners: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16 4.2a3.5 3.5 0 0 1 0 6.6M18 14.2a6.5 6.5 0 0 1 3.5 5.8',
+  zones: 'M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21zM12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  finance: 'M3 7a2 2 0 0 1 2-2h13v4M3 7v10a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2zM16.5 14h.01',
+  support: 'M4 13a8 8 0 0 1 16 0M4 13v4a2 2 0 0 0 2 2h1v-6H6a2 2 0 0 0-2 2zM20 13v4a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM17 19v1a2 2 0 0 1-2 2h-3',
+  reports: 'M4 20V10M10 20V4M16 20v-7M21 20H3', fleets: 'M3 20V8l6-3 6 3v12M15 12h6v8M3 20h18M7 20v-4h4v4',
+  audit: 'M6 3h9l5 5v13H6zM15 3v5h5M9 13h6M9 17h4', users: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16 4.2a3.5 3.5 0 0 1 0 6.6M18 14.2a6.5 6.5 0 0 1 3.5 5.8',
+  roster: 'M7 4h13v16H7zM4 4h.01M4 9h.01M4 14h.01M4 19h.01M11 8h5M11 12h5M11 16h3', settlements: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6', overview: 'M4 5h16v14H4zM4 9h16M8 13h3M8 16h6',
+  bell: 'M6 9a6 6 0 1 1 12 0c0 6 2.5 7 2.5 7h-17S6 15 6 9zM10 20a2 2 0 0 0 4 0', search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4', menu: 'M4 6h16M4 12h16M4 18h16',
+  logout: 'M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10', external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6', pin: 'M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21zM12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  star: 'M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 21l1.1-6.5L2.6 9.8l6.5-.9z', clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5.5l3.5 2', shield: 'M12 3 4.5 6v6c0 4.5 3.2 7.8 7.5 9 4.3-1.2 7.5-4.5 7.5-9V6zM9 12l2.2 2.2L15.5 10',
+  wallet: 'M3 7a2 2 0 0 1 2-2h13v4M3 7v10a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2zM16.5 14h.01', plus: 'M12 5v14M5 12h14', check: 'm5 12.5 4.5 4.5L19 7.5', x: 'M6 6l12 12M18 6 6 18',
+  alert: 'M12 3 2.5 19.5h19zM12 10v4.5M12 17.2h.01', info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5.5M12 7.8h.01',
+  'arrow-right': 'M4 12h15M13 6l6 6-6 6', 'arrow-up-right': 'M7 17 17 7M8 7h9v9', package: 'M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8',
+  sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
+  refresh: 'M20 11a8 8 0 0 0-14.5-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.5 4.5L20 16M20 20v-4h-4', phone: 'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A15 15 0 0 1 3 6a2 2 0 0 1 2-2z',
+  route: 'M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM6 15V9a6 6 0 0 1 6-6h1M18 9v6a6 6 0 0 1-6 6h-1', upload: 'M12 16V5M7 9.5l5-5 5 5M5 20h14',
+  download: 'M12 4v11M7 10.5l5 5 5-5M5 20h14', filter: 'M3 5h18l-7 8.5V19l-4 1.5v-7z', book: 'M4 5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2zM4 20a2 2 0 0 0 2 2h13v-4',
+};
+export const icon = (name, cls = '') => svg('svg', { viewBox: '0 0 24 24', class: `icon ${cls}`.trim(), 'aria-hidden': 'true' }, svg('path', { d: ICONS[name] || ICONS.info }));
 export function h(tag, attrs, ...kids) {
   const el = document.createElementNS(tag === 'svg' || h.svg ? 'http://www.w3.org/2000/svg' : 'http://www.w3.org/1999/xhtml', tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -63,14 +88,28 @@ export const badge = (label, t) => h('span', { class: `badge ${t || ''}` }, labe
 export const statusBadge = (status, label) => badge(label || title(status), tone(status));
 export const demoTag = (show = true) => (show ? h('span', { class: 'badge demo', title: 'Sample record created for testing. Not a real person or order.' }, 'DEMO') : null);
 export const spinner = () => h('div', { class: 'spinner', role: 'status', 'aria-label': 'Loading' });
-export const empty = (text) => h('div', { class: 'empty' }, text);
+export const empty = (text, ico) => h('div', { class: 'empty' }, ico ? icon(ico) : null, text);
 export const note = (text, kind) => h('div', { class: `note ${kind || ''}` }, text);
-export const stat = (label, value, sub) => h('div', { class: 'stat' }, h('div', { class: 'l' }, label), h('div', { class: 'v' }, value), sub ? h('div', { class: 's' }, sub) : null);
+export const stat = (label, value, sub, tone = '') => h('div', { class: `stat ${tone}`.trim() }, h('div', { class: 'l' }, label), h('div', { class: 'v' }, value), sub ? h('div', { class: 's' }, sub) : null);
 export const card = (heading, ...body) => h('section', { class: 'card stack' }, heading ? (typeof heading === 'string' ? h('h2', null, heading) : heading) : null, ...body);
 export const kv = (pairs) => h('dl', { class: 'kv' }, pairs.filter((p) => p && p[1] !== undefined && p[1] !== null && p[1] !== '').map(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
 export const btn = (label, onclick, cls = '') => { const b = h('button', { type: 'button', class: `btn ${cls}` }, label); b.addEventListener('click', () => onclick(b)); return b; };
-export function brand(sub, href = '#/') {
-  return h('a', { class: 'brand', href }, h('img', { src: '/delivery/logo.svg', alt: '', width: 34, height: 34 }), h('span', null, 'Routely', sub ? h('small', null, sub) : null));
+export function brand(sub, href = '#/', extra) {
+  return h('a', { class: 'brand', href },
+    extra && extra.badge ? h('span', { class: 'logo-badge' }, h('img', { src: '/delivery/logo.svg', alt: '', width: 30, height: 30 })) : h('img', { src: '/delivery/logo.svg', alt: '', width: 38, height: 38 }),
+    h('span', null, 'NearBuy', h('b', { class: 'brand-accent' }, ' Delivery'), sub ? h('small', null, sub) : null));
+}
+/** Full-height split sign-in used by the partner app, fleet portal and control tower. */
+export function authShell({ sub = 'Partner app', heading, lead, heroTitle, heroLead, heroPoints = [], heroChips = [] }, ...body) {
+  return h('div', { class: 'auth split' },
+    h('aside', { class: 'hero-side' },
+      brand(sub),
+      h('div', { class: 'stack' },
+        h('h1', null, heroTitle || ['Delivery aapki, ', h('em', null, 'transport hamara'), '.']),
+        heroLead ? h('p', null, heroLead) : null,
+        heroPoints.length ? h('ul', null, heroPoints.map((p) => h('li', null, icon('check'), h('span', null, p)))) : null),
+      heroChips.length ? h('div', { class: 'hero-chips' }, heroChips.map((c) => h('span', { class: 'hero-chip' }, c))) : h('span')),
+    h('div', { class: 'panel form-side' }, h('div', { class: 'inner stack' }, h('div', { class: 'brand-mobile' }, brand(sub)), h('h1', null, heading), lead ? h('p', { class: 'muted' }, lead) : null, ...body)));
 }
 export function table(columns, rows, { emptyText = 'Nothing to show yet.', onRow } = {}) {
   if (!rows || !rows.length) return h('div', { class: 'table-wrap' }, empty(emptyText));
@@ -200,7 +239,7 @@ export function live(params, onChange) {
  * Plot real coordinates on a plain grid. No map provider is connected, so there are no streets: positions are
  * projected from latitude/longitude to scale. points: [{ lat, lng, label, kind }], zones: [{ lat, lng, km, label }]
  */
-const KIND = { pickup: '#12211c', drop: '#b42318', partner: '#0b6e4f', idle: '#1f5f8b', incident: '#d49a00' };
+const KIND = { pickup: '#0d1b3e', drop: '#d92d20', partner: '#0041f5', idle: '#0b7d80', incident: '#d98e00' };
 export function plot(points, zones = [], { height = 300 } = {}) {
   const pts = points.filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng));
   if (!pts.length && !zones.length) return empty('No positions to plot yet.');
@@ -217,11 +256,11 @@ export function plot(points, zones = [], { height = 300 } = {}) {
   const X = (lng) => W / 2 + (lng * kx - cx) * scale; const Y = (lat) => H / 2 - (lat * ky - cy) * scale;
   const kmBar = span > 8 ? 2 : span > 3 ? 1 : 0.5;
   const el = svg('svg', { class: 'plot', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Position plot: ${pts.map((p) => p.label).filter(Boolean).join(', ')}` },
-    zones.map((z) => [svg('circle', { cx: X(z.lng), cy: Y(z.lat), r: z.km * scale, fill: z.off ? '#e9e2e1' : '#dcebe4', stroke: z.off ? '#c9a9a5' : '#9cc9b6', 'stroke-dasharray': '5 5' }), svg('text', { x: X(z.lng), y: Y(z.lat) - z.km * scale + 16, 'text-anchor': 'middle', opacity: 0.6 }, z.label)]),
-    points.filter((p) => p && p.to && Number.isFinite(p.to.lat)).map((p) => svg('line', { x1: X(p.lng), y1: Y(p.lat), x2: X(p.to.lng), y2: Y(p.to.lat), stroke: '#7e918a', 'stroke-width': 1.5, 'stroke-dasharray': '4 4' })),
+    zones.map((z) => [svg('circle', { cx: X(z.lng), cy: Y(z.lat), r: z.km * scale, fill: z.off ? '#fdeceb' : '#e9eeff', stroke: z.off ? '#e7a9a1' : '#a9b9f5', 'stroke-dasharray': '5 5' }), svg('text', { x: X(z.lng), y: Y(z.lat) - z.km * scale + 16, 'text-anchor': 'middle', opacity: 0.6 }, z.label)]),
+    points.filter((p) => p && p.to && Number.isFinite(p.to.lat)).map((p) => svg('line', { x1: X(p.lng), y1: Y(p.lat), x2: X(p.to.lng), y2: Y(p.to.lat), stroke: '#8d97b3', 'stroke-width': 1.5, 'stroke-dasharray': '4 4' })),
     pts.map((p) => [p.kind === 'pickup' ? svg('rect', { x: X(p.lng) - 6, y: Y(p.lat) - 6, width: 12, height: 12, rx: 2, fill: KIND.pickup }) : svg('circle', { cx: X(p.lng), cy: Y(p.lat), r: p.kind === 'partner' ? 8 : 6, fill: KIND[p.kind] || KIND.idle, stroke: '#fff', 'stroke-width': 2 }),
       p.label ? svg('text', { x: X(p.lng) + 10, y: Y(p.lat) + 4 }, p.label) : null]),
-    svg('line', { x1: 14, y1: H - 14, x2: 14 + kmBar * scale, y2: H - 14, stroke: '#12211c', 'stroke-width': 2 }), svg('text', { x: 14, y: H - 20 }, `${kmBar} km`));
+    svg('line', { x1: 14, y1: H - 14, x2: 14 + kmBar * scale, y2: H - 14, stroke: '#0d1b3e', 'stroke-width': 2 }), svg('text', { x: 14, y: H - 20 }, `${kmBar} km`));
   return el;
 }
 export const plotLegend = (kinds = ['pickup', 'drop', 'partner']) => h('div', { class: 'legend' }, kinds.map((k) => h('span', null, h('i', { style: `background:${KIND[k]}` }), { pickup: 'Pickup point', drop: 'Drop point', partner: 'Partner on delivery', idle: 'Partner online', incident: 'Open incident' }[k])),

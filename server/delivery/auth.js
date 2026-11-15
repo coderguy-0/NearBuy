@@ -106,7 +106,7 @@ async function issueOtp(user, channel, purpose) {
   insert('otp_codes', { user_id: user.id, channel, purpose, code_hash: sha256(`${user.id}:${purpose}:${code}`), expires_at: new Date(Date.now() + 600000).toISOString(), created_at: nowIso() });
   let delivered = false;
   if (channel === 'email') {
-    const result = await sendMail({ to: user.email, purpose: `otp_${purpose}`, subject: 'Your Routely delivery partner code', text: `Your code is ${code}. It is valid for 10 minutes. If you did not ask for it, ignore this message.` });
+    const result = await sendMail({ to: user.email, purpose: `otp_${purpose}`, subject: 'Your NearBuy Delivery partner code', text: `Your code is ${code}. It is valid for 10 minutes. If you did not ask for it, ignore this message.` });
     delivered = result.delivered;
   }
   if (!delivered && !TEST_TOOLS()) throw new HttpError(503, channel === 'sms' ? 'Text messages are not connected yet, so a code cannot be sent to this mobile number.' : 'Email is not connected yet, so a code cannot be sent.');

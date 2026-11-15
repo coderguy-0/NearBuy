@@ -12,7 +12,10 @@ require('./routes/orders');
 require('./routes/finance');
 require('./routes/growth');
 require('./routes/ops');
+require('./routes/customer');
+require('./routes/fulfilment');
 const { seedIfNeeded } = require('./seed');
+const { seedMarketplace } = require('./marketplace-seed');
 const delivery = require('./delivery');
 
 const PORT = Number(process.env.PORT || 4173);
@@ -192,6 +195,10 @@ function handleStatic(req, res, url) {
   if (segments.some((s) => s.startsWith('.') || s.includes('\\')) || BLOCKED_TOP.has(segments[0])) { notFoundPage(res); return; }
 
   // Seller Hub single-page app: every /seller/... URL that is not a static asset opens the app shell.
+  if (segments[0] === 'customer' && segments[1] !== 'app') {
+    sendFile(res, path.join(ROOT, 'customer', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method);
+    return;
+  }
   if (segments[0] === 'seller' && segments[1] !== 'app') {
     sendFile(res, path.join(ROOT, 'seller', 'index.html'), { 'Content-Security-Policy': SPA_CSP }, req.method);
     return;
@@ -221,6 +228,7 @@ const server = http.createServer((req, res) => {
 
 function start(port = PORT) {
   seedIfNeeded();
+  seedMarketplace();
   delivery.seedDelivery();
   delivery.startBackground();
   return new Promise((resolve) => {

@@ -20,6 +20,7 @@ The server creates one sample store, **Green Basket Market**, the first time it 
 
 | Role | Email | Password | Can do |
 | --- | --- | --- | --- |
+| Customer (storefront) | `customer@nearbuy.demo` | `Customer123!` | Shop, order, track, cancel before the shop accepts |
 | Store owner | `owner@nearbuy.demo` | `Seller123!` | Everything, including payments, team, ads and settings |
 | Catalogue manager | `catalogue@nearbuy.demo` | `Team123!` | Products, promotions, analytics (read) |
 | Order manager | `orders@nearbuy.demo` | `Team123!` | Orders, returns, shipping |
@@ -53,7 +54,7 @@ These are stated in the interface as well; nothing here is presented as live.
 | Payouts | Settlements are calculated and marked *awaiting payout*; no money moves | A payout provider, then `POST /api/ops/settlements/:code/paid` |
 | Advertising | Campaigns are stored; real campaigns record zero delivery | An ad-serving system |
 | KYC | PAN, GSTIN and IFSC are format-checked only | A verification provider |
-| Customer orders | Created through *Simulate order* or the sample data | The customer checkout writing to the same database |
+| Customer orders | Written by the real storefront checkout at `/customer/` | Nothing — visible in the Seller Hub as soon as they are placed |
 | Sample images | 10 of the 28 sample products have photographs; the other 18 use labelled placeholder cards | Real product photography |
 
 ### Configuration
@@ -94,23 +95,86 @@ Passwords are hashed with scrypt; sessions are random tokens stored hashed, in a
 
 `tests/seller-hub.test.cjs` starts the real server on a spare port with a temporary data folder and exercises it over HTTP: security headers and CSRF, sign-in behind an HTTPS proxy and for every demo account, registration through approval, listing review, tenant isolation, the order lifecycle with stock and ledger, returns, inventory, promotions, tickets, role limits, invitations and password reset, and every page endpoint and export.
 
-### Customer Discover
+---
 
-After signing in to the customer portal, **Discover** brings neighbourhood shopping together with a search bar, category shortcuts, popular in-stock products, local shops, saved items and order tracking. Product search understands category names and multiple words; **Browse everything** also offers in-stock and deal filters. The **LOCAL10** demo offer can be applied from Discover and is reflected in the cart and checkout.
+## Customer storefront (`/customer/`)
+
+The shop front at `/customer/` is the customer half of NearBuy One: the same server, the same database and the same
+order records the Seller Hub and the delivery network already use. Nothing in it is stored in the browser except the
+cart you have not checked out yet.
+
+| Screen | Route | What it does |
+| --- | --- | --- |
+| Home | `#/` | Your area, serviceability, the shops serving your pincode, popular products |
+| Shops | `#/shops` | Every approved shop in the zone with distance, rating and what is in stock |
+| Shop | `#/shop/:code` | Real catalogue, categories, stock counts, delivery fee quoted by the server |
+| Cart | `#/cart` | One cart across several shops, delivery **or** free collection per shop, server-quoted fees |
+| Checkout | `#/cart` → place order | Creates one parent order plus one order per shop, inside one transaction |
+| Orders | `#/orders`, `#/orders/:code` | Live status per shop, runner and ETA, collection/delivery code, tracking link, cancel before acceptance |
+| Account | `#/account` | Profile, delivery address, notification centre |
+| Sign in / up | `#/login`, `#/register` | Real accounts: scrypt-hashed password, own cookie, server-side checks |
+
+**Try it without registering:** sign in as `customer@nearbuy.demo` / `Customer123!` (created only when demo seeding is
+on). Registration works too and is rate-limited.
+
+### One order, several shops
+
+A cart that spans three shops becomes **one parent order** (`CNB-####`) and **one order per shop** (`ORD-######`). Each
+shop sees only its own row in its own Seller Hub and can accept, reject, prepare and dispatch it without seeing the
+other shops in the basket. Stock is reserved for every shop inside a single `BEGIN IMMEDIATE` transaction, so a checkout
+either reserves every line or reserves none; cancelling before the shop accepts releases the reservations again.
+
+### Fulfilment chosen by the shop, not by the platform
+
+Every delivery order lands in the Seller Hub as a **fulfilment decision**:
+
+- **Deliver myself** — the network delivery is released, the shop delivers with its own rider and closes the order with
+  the customer's delivery code.
+- **Find a NearBuy runner** — the seller sees eligible partners ranked by distance, current workload, vehicle and parcel
+  fit, with the payout for that job. Appointing one sends a real offer; it expires, can be declined, and the job never
+  has two owners (assignment is a single conditional `UPDATE`).
+- **Collection at the counter** — free, no delivery record, the shop verifies the customer's collection code.
+
+### Verification, not buttons
+
+Both codes are checked by the server: the runner enters the **pickup PIN** printed on the seller's handover screen, and
+the customer's **delivery code** (shown only on their own order page and the track link). Arrival is checked against the
+partner's reported location (250 m). Codes expire, attempts are limited, and the seller cannot close a delivery that was
+never picked up.
+
+### What is not connected
+
+No payment gateway (orders record *cash on delivery* or *prepaid*, and no money is charged), no SMS or email (no SMTP
+account in this environment), no maps or routing service (distance is straight-line × 1.35 from the pincode centre).
+Runner earnings and settlements are records; payouts are marked *awaiting payout* until operations record a bank
+reference.
+
+Code: `server/routes/customer.js` (API + storefront), `customer/` (UI), `server/marketplace-seed.js` (demo shops).
+Tests: `tests/customer-marketplace.test.cjs` (17 end-to-end tests: accounts, multi-shop checkout, isolation, pickup, self-delivery, runner matching, both codes, geofence, decline/expiry, no-runner fallback, single assignment, last-unit race, retries and code-guessing limits).
+
+---
+
+#### The older browser-only demo (`/portal.html`)
+
+`/portal.html` is the original client-side demo and is kept as-is so nothing that worked before disappears. It does not
+talk to the server: its shops, cart, orders and account live in `localStorage`, and it says so on the page. Everything
+below in this subsection describes **that demo**, not the storefront above.
+
+After signing in to the demo portal, **Discover** brings neighbourhood shopping together with a search bar, category shortcuts, popular in-stock products, local shops, saved items and order tracking. Product search understands category names and multiple words; **Browse everything** also offers in-stock and deal filters. The **LOCAL10** demo offer can be applied from Discover and is reflected in the cart and checkout.
 
 The neighbourhood picker, products, prices, orders and offer are simulated; choosing an area does not perform a live coverage or GPS check. Changes stay in this browser.
 
-### Customer product details
+#### Demo product pages (`/portal.html`)
 
-Every catalogue item has a product page at `#/shop/product/<id>` with a showcase, description, shop location and public contact fields, delivery and pickup information, highlights, specifications, warranty, manufacturer information and related finds. Missing information is explicitly marked as not provided; descriptions and highlights can fall back to the item's existing short detail. The first four original demo products have illustrative images, while other items show a placeholder until images are supplied. Delivery is ₹19 below ₹199 after discounts, free at or above ₹199; pickup is free. Availability and delivery coverage are not checked in this demo.
+Every catalogue item in the demo has a product page at `#/shop/product/<id>` with a showcase, description, shop location and public contact fields, delivery and pickup information, highlights, specifications, warranty, manufacturer information and related finds. Missing information is explicitly marked as not provided; descriptions and highlights can fall back to the item's existing short detail. The first four original demo products have illustrative images, while other items show a placeholder until images are supplied. Delivery is ₹19 below ₹199 after discounts, free at or above ₹199; pickup is free. Availability and delivery coverage are not checked in this demo.
 
 For Green Basket products, sign in to **Seller → Products & catalogue** and open **Add product** or **Edit → Product page details** to provide optional descriptions, highlights, specifications, warranty, manufacturer details and up to four image URLs. URLs must be HTTPS (excluding localhost) or local `/public/assets/` paths; images are not uploaded. Viewers' browsers request any external image from its host, so use only images you are permitted to share. The seller can set optional, customer-visible owner and phone fields in **Manage profile → Business details**. These are separate from private login and runner contact details; other shops' missing public contacts remain unavailable. Use sample values only and do not call the displayed demo contacts.
 
 ---
 
-## Delivery partner network ("Routely")
+## Delivery partner network (NearBuy Delivery)
 
-Local orders are carried by a delivery network that runs on the same server and database as the Seller Hub, but has its own name, look and sign-ins. Each audience gets a separate app and a separate session cookie; one sign-in never opens another app.
+Local orders are carried by a delivery network that runs on the same server and database as the Seller Hub, but has its own near-white, Porter-inspired look (NearBuy blue #0041f5, yellow accent) and its own sign-ins. Each audience gets a separate app and a separate session cookie; one sign-in never opens another app.
 
 | App | Address | Who uses it | Demo sign-in (only when `SEED_DEMO=1`) |
 | --- | --- | --- | --- |
@@ -151,7 +215,7 @@ Code: `server/delivery/` (server), `delivery/` (shared look and components), `ru
 | Route | Page |
 | --- | --- |
 | `/` | Universal homepage — 3D hero, portals, categories, how it works, why NearBuy, portal previews, partners, trust, FAQs, Help & Support enquiry form |
-| `/customer/` · `/customer/login/` | Enters the customer portal (redirects into NearBuy One, Shop workspace) |
+| `/customer/` | Customer storefront: real shops, catalogue, cart, checkout, orders, account (see *Customer storefront* above) |
 | `/seller/` · `/seller/register/` | Enters the seller portal (Sell workspace) |
 | `/runner/` · `/runner/register/` | Delivery partner app (see the delivery partner network section) |
 | `/admin/` | Gated entrance to the internal operations console (noindex, never linked in public navigation) |
@@ -223,23 +287,32 @@ NearBuy One rebuilds them as **one product**:
 
 | Workspace | Who | What you can do |
 | --- | --- | --- |
-| **Shop** | Neighbour | Discover, filter, save, cart, checkout, track orders, manage account, follow shops — plus the **Why Use NearBuy?** benefits band |
-| **Sell** | Green Basket Market | Accept orders, mark ready, request runners, edit catalogue & stock, promotions, payouts, insights, settings, team — plus the **Why Sell on NearBuy?** benefits band |
+| **Shop** | Neighbour | Real shops, catalogue and stock, multi-shop cart, checkout with delivery or collection, order tracking, cancellation, account — at `/customer/` |
+| **Sell** | Green Basket Market | Accept real customer orders, prepare, mark ready, choose *deliver myself* or *find a runner*, edit catalogue & stock, promotions, payouts, insights, settings, team — plus the **Why Sell on NearBuy?** benefits band |
 | **Deliver** | Runner | Go online, accept/pass requests, shop arrival, pickup OTP, route, delivery OTP, earnings, preferences, safety reports — plus the **Why Become a NearBuy Delivery Partner?** band |
 | **Fleet** | Neighbourhood fleet lead | Team availability, work allocation, auto-match, reports, safety commitments |
 | **Ops** | South Delhi ops desk | Control tower, dispatch queue, **verification queue**, **homepage enquiry queue**, partner eligibility, service areas, pricing bands, incidents, audit log |
 
 ## Follow one order around the loop
 
-Every portal is signed in separately — that is the point — so the loop is walked by signing in as each one in turn. The data underneath is the same record throughout.
+One order, one database, five sign-ins. Each portal signs in on its own, so the loop is walked by signing in as each one
+in turn — the record underneath is the same row throughout, never a copy.
 
-1. **Customer** — sign in as `riya@nearbuy.demo`, add a product, open the cart, apply `LOCAL10`, place the order. *Sign out.*
-2. **Seller** — sign in as `owner@nearbuy.demo`; the order is already in *Orders*. Accept it, mark it ready, then **Request runner** on *Delivery & pickup*. *Sign out.*
-3. **Delivery Partner** — sign in as `rohan@nearbuy.demo`; the request is waiting in *Delivery requests*. Accept it, note arrival at the shop, verify the pickup OTP, start the route, verify the delivery OTP. *Sign out.*
-4. **Customer** — sign in again: the order reads *Delivered* with the full timeline, and the runner's sample earning is on the seller's ledger.
-5. **Operations** — unlock with `NB-OPS-2026`: the task, every status change and the sample earning are in the audit log.
+1. **Customer** — `/customer/` as `customer@nearbuy.demo`. Add items from two or three shops, choose home delivery in one
+   shop and collection in another, place the order. Note the parent order number (`CNB-####`).
+2. **Seller** — `/seller/` as `owner@nearbuy.demo` (or `stationery@nearbuy.demo` for the other shop). The order is in
+   *Orders*: accept it, prepare it, mark it ready. On the delivery card choose **Deliver myself** or **Find a NearBuy
+   runner**. *Sign out.*
+3. **Runner** — `/runner/` as `rohan@nearbuy.demo`. Go online, accept the offer, mark arrival at the shop, type the
+   pickup PIN printed on the seller's screen, then follow the route and type the customer's delivery code.
+4. **Customer again** — the order page now shows the runner, the ETA and the live status, and closes when the delivery
+   code is verified. The collection order closes with its own code at the counter.
+5. **Operations** — `/control-tower/` as `tower@nearbuy.demo`: the same delivery in *Deliveries*, every status change,
+   both code attempts, the payout record, and the audit log entry for each action.
 
-Nothing carries a session across those steps: each one is a fresh sign-in for that portal only.
+Nothing carries a session across those steps: each one is a fresh sign-in for that portal only. The older
+`/portal.html` demo (sections above the delivery network) still walks a similar loop inside one browser tab, entirely in
+`localStorage`, and is kept only as an offline demonstration.
 
 ## The operations console is gated
 
