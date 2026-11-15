@@ -1,6 +1,6 @@
-// Routely Partner — the delivery partner app. Every number and status on these screens is read from the server.
+// NearBuy Delivery partner app. Every number and status on these screens is read from the server.
 import { withSession } from '/delivery/session.js';
-import { h, mount, api, act, money, dt, day, clock, ago, mins, pct, val, badge, statusBadge, demoTag, spinner, empty, note, stat, card, kv, btn, brand, table, timeline, tabs, toast, modal, form, formModal, confirmModal, currentRoute, go, onRoute, live, plot, plotLegend, mapsLink, readFileInput, svg } from '/delivery/kit.js';
+import { h, mount, api, act, money, dt, day, clock, ago, mins, pct, val, badge, statusBadge, demoTag, spinner, empty, note, stat, card, kv, btn, brand, authShell, icon, table, timeline, tabs, toast, modal, form, formModal, confirmModal, currentRoute, go, onRoute, live, plot, plotLegend, mapsLink, readFileInput, svg } from '/delivery/kit.js';
 
 const root = document.getElementById('app');
 const S = { me: null, config: null, publicConfig: null, stopLive: null, watch: null, lastSent: 0, geo: 'idle', timers: [] };
@@ -37,26 +37,33 @@ function testLocation(points, refresh) {
 }
 
 /* ---------- Shell ---------- */
-const ICON = {
-  home: 'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10', tasks: 'M4 7h16v12H4zM8 7V4h8v3M4 12h16', earn: 'M4 6h16v12H4zM12 9v6M9.5 10.5h3.2a1.3 1.3 0 0 1 0 2.6h-1.4a1.3 1.3 0 0 0 0 2.6h3.2',
-  perf: 'M4 19V9M10 19V5M16 19v-7M21 19H3', help: 'M12 21a9 9 0 1 0-9-9c0 1.6.4 3 1.1 4.3L3 21l4.8-1.1A9 9 0 0 0 12 21zM9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.4-1.1.9-1.1 1.7M12 16.3v.2', me: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20a7.5 7.5 0 0 1 15 0',
+const NAV = {
+  full: [['/', 'Home', 'home'], ['/tasks', 'Tasks', 'deliveries'], ['/earnings', 'Earnings', 'wallet'], ['/performance', 'Performance', 'perf'], ['/support', 'Support', 'support'], ['/profile', 'Profile', 'me']],
+  limited: [['/', 'Application', 'home'], ['/support', 'Support', 'support'], ['/profile', 'Profile', 'me']],
 };
-const icon = (d) => svg('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }, svg('path', { d }));
 function shell(active, heading, ...body) {
-  const nav = approved()
-    ? [['/', 'Home', 'home'], ['/tasks', 'Tasks', 'tasks'], ['/earnings', 'Earnings', 'earn'], ['/performance', 'Performance', 'perf'], ['/support', 'Support', 'help'], ['/profile', 'Profile', 'me']]
-    : [['/', 'Application', 'home'], ['/support', 'Support', 'help'], ['/profile', 'Profile', 'me']];
+  const nav = approved() ? NAV.full : NAV.limited;
+  const unread = S.me.unread_notifications;
   mount(root, h('div', { class: 'phone' },
-    h('header', { class: 'top' }, brand('Partner'), h('div', { class: 'row' }, demoTag(S.me.partner.is_demo), h('a', { class: 'btn sm', href: '#/notifications', 'aria-label': `Notifications, ${S.me.unread_notifications} unread` }, 'Alerts', S.me.unread_notifications ? badge(S.me.unread_notifications, 'bad') : null))),
-    h('main', { class: 'stack' }, heading ? h('h1', null, heading) : null, ...body)),
-  h('div', { class: 'tabbar' }, h('nav', { 'aria-label': 'Main' }, nav.map(([path, label, ic]) => h('a', { href: `#${path}`, 'aria-current': active === path ? 'page' : null }, icon(ICON[ic]), label)))));
+    h('header', { class: 'top' }, brand('Partner app'), h('div', { class: 'row nowrapx' }, demoTag(S.me.partner.is_demo),
+      h('a', { class: 'icon-btn bordered', href: '#/notifications', 'aria-label': `Alerts, ${unread} unread` }, icon('bell'), unread ? h('span', { class: 'count' }, unread > 9 ? '9+' : unread) : null))),
+    h('main', { class: 'stack' }, heading ? h('div', { class: 'page-head' }, h('h1', null, heading)) : null, ...body)),
+  h('div', { class: 'tabbar' }, h('nav', { 'aria-label': 'Main' }, nav.map(([path, label, ic]) => h('a', { href: `#${path}`, 'aria-current': active === path ? 'page' : null }, icon(ic), label)))));
+  const top = root.querySelector('.top');
+  const onScroll = () => top && top.classList.toggle('scrolled', window.scrollY > 4);
+  if (window.__nbTopScroll !== onScroll) { window.removeEventListener('scroll', window.__nbTopScroll || (() => {})); window.addEventListener('scroll', onScroll, { passive: true }); window.__nbTopScroll = onScroll; }
+  onScroll();
 }
 const loading = (active, heading) => shell(active, heading, spinner());
-const failed = (active, heading, e, retry) => shell(active, heading, h('div', { class: 'card bad stack' }, h('p', null, e.message), btn('Try again', retry)));
+const failed = (active, heading, e, retry) => shell(active, heading, h('div', { class: 'card bad stack' }, h('p', null, e.message), btn('Try again', retry, 'primary')));
 
 /* ---------- Sign in, register, reset ---------- */
 function authPage(heading, sub, ...body) {
-  mount(root, h('div', { class: 'auth' }, h('div', { class: 'panel stack' }, brand('Partner', '#/login'), h('div', { class: 'card stack' }, h('h1', null, heading), sub ? h('p', { class: 'muted' }, sub) : null, ...body))));
+  mount(root, authShell({ sub: 'Partner app', heading, lead: sub,
+    heroTitle: ['Delivery aapki, ', h('em', null, 'transport hamara'), '.'],
+    heroLead: 'Pick up from neighbourhood shops, deliver within minutes, and see every rupee you earn — all in one app.',
+    heroPoints: ['Offers near you, with the full earning shown before you accept', 'Verified pickups and deliveries with a simple 4-digit code', 'Daily earnings, weekly payouts and cash records you can check'],
+    heroChips: ['Same-day payouts', 'Live offers', 'Free partner support'] }, ...body));
 }
 const testCode = (r) => (r && r.test_code ? note(`${r.test_note} Code: ${r.test_code}`, 'test') : null);
 async function pageLogin() {
@@ -74,23 +81,27 @@ async function pageLogin() {
           { submit: 'Verify and sign in', onSubmit: async (c) => { await api('/api/partners/login/otp/verify', { method: 'POST', body: { mobile: v.mobile, code: c.code } }); await enter(); } }), btn('Use a different number', askOtp, 'ghost sm'));
       } }));
     askOtp();
-    authPage('Sign in', 'Deliver food, groceries and parcels in your area.',
-      tabs([['password', 'Password'], ['otp', 'One-time code']], mode, (m) => { mode = m; draw(); }), mode === 'password' ? pw : otpBox,
-      h('div', { class: 'row between small' }, h('a', { href: '#/forgot' }, 'Forgot password?'), h('a', { href: '#/register' }, 'Become a delivery partner')),
-      demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample approved partner (demo data) is available.'),
-        btn('Fill demo partner sign-in', () => { mode = 'password'; draw(); const f = root.querySelector('form'); f.controls.identifier.value = demo.partner.identifier; f.controls.password.value = demo.partner.password; }, 'sm')) : null);
+    authPage('Welcome back', 'Sign in to go online and see delivery offers near you.',
+      h('div', { class: 'card stack' },
+        tabs([['password', 'Password'], ['otp', 'One-time code']], mode, (m) => { mode = m; draw(); }), mode === 'password' ? pw : otpBox,
+        h('div', { class: 'row between small' }, h('a', { href: '#/forgot' }, 'Forgot password?'), h('a', { href: '#/register' }, 'Become a delivery partner')),
+        demo ? h('div', { class: 'note test stack tight' }, h('div', null, h('strong', null, 'TEST ENVIRONMENT · '), 'A sample approved partner (demo data) is available.'),
+          btn('Fill demo partner sign-in', () => { mode = 'password'; draw(); const f = root.querySelector('form'); f.controls.identifier.value = demo.partner.identifier; f.controls.password.value = demo.partner.password; }, 'sm yellow')) : null,
+        h('p', { class: 'tiny muted' }, 'NearBuy Delivery partners only. Shop owners and customers sign in through their own portals.')));
   };
   draw();
 }
 function pageRegister() {
-  authPage('Become a delivery partner', 'Create your account, then complete your profile, vehicle and documents. You can deliver after your application is approved.',
-    form([
-      { name: 'name', label: 'Full name', required: true, autocomplete: 'name', max: 80 }, { name: 'mobile', label: 'Mobile number', type: 'tel', inputmode: 'numeric', required: true, max: 10, hint: '10-digit Indian mobile number', autocomplete: 'tel-national' },
-      { name: 'email', label: 'Email address', type: 'email', required: true, autocomplete: 'email' }, { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', hint: 'At least 8 characters with an uppercase letter, a lowercase letter and a number.' },
-      { name: 'fleet_code', label: 'Fleet code', hint: 'Only if a logistics company asked you to join their fleet.' },
-      { name: 'accept_terms', type: 'checkbox', label: 'I agree to the delivery partner terms and to the use of my location while I am online or on a delivery.' },
-    ], { submit: 'Create account', onSubmit: async (v) => { await api('/api/partners/applications', { method: 'POST', body: v }); await enter(); } }),
-    h('p', { class: 'small' }, 'Already registered? ', h('a', { href: '#/login' }, 'Sign in')));
+  authPage('Become a delivery partner', 'Deliver food, groceries and parcels in your neighbourhood. Sign up in minutes — go online once your documents are verified.',
+    h('div', { class: 'card stack' },
+      form([
+        { name: 'name', label: 'Full name', required: true, autocomplete: 'name', max: 80 }, { name: 'mobile', label: 'Mobile number', type: 'tel', inputmode: 'numeric', required: true, max: 10, hint: '10-digit Indian mobile number', autocomplete: 'tel-national' },
+        { name: 'email', label: 'Email address', type: 'email', required: true, autocomplete: 'email' }, { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', hint: 'At least 8 characters with an uppercase letter, a lowercase letter and a number.' },
+        { name: 'fleet_code', label: 'Fleet code', hint: 'Only if a logistics company asked you to join their fleet.' },
+        { name: 'accept_terms', type: 'checkbox', label: 'I agree to the delivery partner terms and to the use of my location while I am online or on a delivery.' },
+      ], { submit: 'Create partner account', onSubmit: async (v) => { await api('/api/partners/applications', { method: 'POST', body: v }); await enter(); } }),
+      h('p', { class: 'small' }, 'Already registered? ', h('a', { href: '#/login' }, 'Sign in'))),
+    h('div', { class: 'grid g3 collapse' }, [['Package', 'Pick up from shops'], ['Route', 'Deliver in your zone'], ['Wallet', 'Get paid weekly']].map(([t, d]) => h('div', { class: 'card flat stack tight', style: 'padding:14px' }, h('strong', null, t), h('div', { class: 'small muted' }, d)))));
 }
 function pageForgot() {
   const box = h('div', { class: 'stack' });
@@ -100,7 +111,8 @@ function pageForgot() {
       { submit: 'Change password', onSubmit: async (c) => { const out = await api('/api/partners/password/reset', { method: 'POST', body: { identifier: v.identifier, ...c } }); toast(out.message, 'ok'); go('/login'); } }));
   } }));
   ask();
-  authPage('Reset your password', 'We send a one-time code to your registered mobile number or email.', box, h('p', { class: 'small' }, h('a', { href: '#/login' }, 'Back to sign in')));
+  authPage('Reset your password', 'We send a one-time code to your registered mobile number or email.',
+    h('div', { class: 'card stack' }, box, h('p', { class: 'small' }, h('a', { href: '#/login' }, '← Back to sign in'))));
 }
 async function enter() {
   await loadMe();
@@ -113,7 +125,7 @@ async function enter() {
 function uploadRow(kind, doc, done) {
   const input = h('input', { type: 'file', class: 'input', accept: kind === 'photo' ? 'image/jpeg,image/png,image/webp' : 'image/jpeg,image/png,image/webp,application/pdf', 'aria-label': `Choose ${S.config.document_kinds[kind]}` });
   const editable = S.me.partner.editable || !doc || doc.status === 'rejected';
-  return h('div', { class: 'card flat stack tight' }, h('div', { class: 'row between' }, h('strong', null, S.config.document_kinds[kind]), doc ? statusBadge(doc.status, doc.status === 'pending' ? 'Uploaded — awaiting check' : null) : badge('Not uploaded', 'warn')),
+  return h('div', { class: 'card flat stack tight', style: `border-left:3px solid ${doc && doc.status === 'verified' ? 'var(--green)' : doc ? 'var(--accent-d)' : 'var(--line-2)'}` }, h('div', { class: 'row between' }, h('strong', null, S.config.document_kinds[kind]), doc ? statusBadge(doc.status, doc.status === 'pending' ? 'Uploaded — awaiting check' : null) : badge('Not uploaded', 'warn')),
     doc ? h('div', { class: 'small muted' }, `${doc.file_name || 'File'} · ${Math.max(1, Math.round(doc.size / 1024))} KB · ${dt(doc.uploaded_at)}`, doc.note ? ` · ${doc.note}` : '') : null,
     doc ? h('a', { class: 'small', href: withSession(`/api/partners/documents/${doc.id}/file`), target: '_blank', rel: 'noopener' }, 'View my upload') : null,
     editable && (!doc || doc.status !== 'verified') ? h('div', { class: 'row' }, h('div', { class: 'grow' }, input), btn(doc ? 'Replace' : 'Upload', async (b) => {
@@ -150,8 +162,15 @@ function pageApplication() {
     }[p.status];
     const doneCount = checklist.filter((c) => c.done).length;
     shell('/', 'Your application',
-      h('div', { class: 'row between' }, h('span', { class: 'muted' }, `Partner ID ${p.code}`), statusBadge(p.status, p.status_label)),
-      banner, h('div', { class: 'steps', role: 'img', 'aria-label': `${doneCount} of ${checklist.length} steps complete` }, checklist.map((c) => h('span', { class: c.done ? 'on' : '' }))),
+      h('section', { class: 'card hero stack tight' },
+        h('div', { class: 'row between' }, h('span', { class: 'hero-eyebrow' }, 'Partner onboarding'), statusBadge(p.status, p.status_label)),
+        h('h2', null, doneCount === checklist.length ? 'All steps complete — submit any time' : `${checklist.length - doneCount} step${checklist.length - doneCount === 1 ? '' : 's'} left before you can deliver`),
+        h('div', { class: 'row between small' }, h('span', { class: 'muted' }, `Partner ID ${p.code}`), h('span', { class: 'strong' }, `${doneCount} of ${checklist.length} complete`)),
+        h('div', { class: 'steps', role: 'img', 'aria-label': `${doneCount} of ${checklist.length} steps complete` }, checklist.map((c) => h('span', { class: c.done ? 'on' : '' })))),
+      banner,
+      h('div', { class: 'grid g2 collapse' }, checklist.map((c, i) => h('div', { class: `card flat stack tight ${c.done ? 'accent' : ''}`, style: 'padding:13px' },
+        h('div', { class: 'row between' }, h('span', { class: 'tiny muted strong' }, `STEP ${i + 1}`), c.done ? badge('Done', 'ok') : badge('To do', 'warn')),
+        h('div', { class: 'small strong' }, c.label)))),
       card(head('account', 1), verifyBlock('mobile', 'Mobile', u.mobile_verified, u.mobile), verifyBlock('email', 'Email', u.email_verified, u.email)),
       card(head('profile', 2), form([
         { name: 'city', label: 'City', required: true, value: p.city, max: 60 },
@@ -188,22 +207,28 @@ function historyBox() {
 function offerCard(o, refresh) {
   const total = S.config.offer_seconds || 45;
   const bar = h('i', { style: `width:${Math.min(100, (o.seconds_left / total) * 100)}%` });
+  const timer = h('div', { class: 'timer' }, bar);
   const left = h('strong', null, `${o.seconds_left}s`);
-  const tick = () => { const s = Math.max(0, Math.round((Date.parse(o.expires_at) - Date.now()) / 1000)); left.textContent = `${s}s`; bar.style.width = `${Math.min(100, (s / total) * 100)}%`; if (s <= 0) refresh(); };
+  const tick = () => { const s = Math.max(0, Math.round((Date.parse(o.expires_at) - Date.now()) / 1000)); left.textContent = `${s}s`; bar.style.width = `${Math.min(100, (s / total) * 100)}%`; timer.classList.toggle('low', s <= 10); if (s <= 0) refresh(); };
   every(1000, tick);
   return h('section', { class: 'offer stack', 'aria-label': 'New delivery offer' },
-    h('div', { class: 'row between' }, h('strong', null, 'New delivery offer'), h('span', { class: 'small' }, 'Expires in ', left)), h('div', { class: 'timer' }, bar),
-    h('div', { class: 'row between' }, h('div', null, h('div', { class: 'earn' }, money(o.earning)), h('div', { class: 'small muted' }, 'Estimated earning')), h('div', { class: 'right' }, badge(o.category_label, 'info'), ' ', badge(o.payment_type === 'cod' ? `Collect ${money(o.cod_amount)}` : 'Prepaid', o.payment_type === 'cod' ? 'warn' : 'ok'))),
+    h('div', { class: 'row between' }, h('span', { class: 'offer-eyebrow' }, 'New delivery offer'), h('span', { class: 'small muted nowrap' }, 'Expires in ', left)), timer,
+    h('div', { class: 'row between top' }, h('div', null, h('div', { class: 'earn' }, money(o.earning)), h('div', { class: 'small muted' }, 'Estimated earning')),
+      h('div', { class: 'right stack tight' }, badge(o.category_label, 'info'), badge(o.payment_type === 'cod' ? `Collect ${money(o.cod_amount)}` : 'Prepaid', o.payment_type === 'cod' ? 'warn' : 'ok'))),
     h('div', { class: 'leg' }, h('span', { class: 'pin b' }), h('div', null, h('strong', null, o.pickup.name), h('div', { class: 'small muted' }, `${o.pickup.address} · ${o.pickup_distance_km} km from you, about ${o.pickup_eta_min} min`)),
       h('span', { class: 'pin' }), h('div', null, h('strong', null, `Drop area: ${o.drop_area}`), h('div', { class: 'small muted' }, `${o.trip_distance_km} km trip · full address shown after pickup`))),
-    kv([['Estimated total time', `${o.total_minutes} min`], ['Package', `${o.package_count} × ${o.package_type}${o.weight_kg ? ` · ${o.weight_kg} kg` : ''}`], ['Order', o.ready ? 'Ready for pickup' : o.expected_ready_at ? `Ready about ${clock(o.expected_ready_at)}` : 'Being prepared'], o.method === 'scheduled' ? ['Scheduled for', dt(o.scheduled_for)] : null]),
+    h('div', { class: 'grid g2 collapse', style: 'gap:10px' },
+      h('div', { class: 'card flat stack tight', style: 'padding:12px' }, h('div', { class: 'tiny muted' }, 'Estimated total time'), h('strong', null, `${o.total_minutes} min`)),
+      h('div', { class: 'card flat stack tight', style: 'padding:12px' }, h('div', { class: 'tiny muted' }, 'Package'), h('strong', null, `${o.package_count} × ${o.package_type}${o.weight_kg ? ` · ${o.weight_kg} kg` : ''}`))),
+    kv([['Order', o.ready ? 'Ready for pickup' : o.expected_ready_at ? `Ready about ${clock(o.expected_ready_at)}` : 'Being prepared'], o.method === 'scheduled' ? ['Scheduled for', dt(o.scheduled_for)] : null]),
     h('div', { class: 'grid g2' }, btn('Decline', () => formModal('Decline this offer', [{ name: 'reason', label: 'Reason', type: 'select', options: ['Too far', 'Vehicle not suitable', 'Taking a break', 'Other'] }],
       { submit: 'Decline offer', intro: 'Declining does not reduce your pay. The offer goes to the next partner.', onSubmit: async (v) => { await api(`/api/delivery/offers/${o.id}/decline`, { method: 'POST', body: v }); refresh(); } }), 'big'),
     btn('Accept', async (b) => { try { b.disabled = true; const r = await api(`/api/delivery/offers/${o.id}/accept`, { method: 'POST' }); toast('Delivery accepted.', 'ok'); go(`/task/${r.delivery.code}`); } catch (e) { toast(e.message, 'bad'); refresh(); } }, 'primary big')));
 }
 const taskSummary = (d) => h('a', { class: 'card accent stack tight', href: `#/task/${d.code}`, style: 'text-decoration:none;color:inherit' },
   h('div', { class: 'row between' }, h('strong', null, `Active delivery ${d.code}`), statusBadge(d.status, d.status_label)),
-  h('div', { class: 'small' }, `${d.pickup.name} → ${d.drop.area}`), h('div', { class: 'row between small muted' }, `${d.category_label} · ${d.distance_km} km`, h('span', { class: 'strong', style: 'color:var(--brand-d)' }, 'Open task →')));
+  h('div', { class: 'small' }, `${d.pickup.name} → ${d.drop.area}`),
+  h('div', { class: 'row between small muted' }, `${d.category_label} · ${d.distance_km} km`, h('span', { class: 'strong', style: 'color:var(--brand)' }, 'Open task →')));
 async function pageHome(silent) {
   if (!approved()) return pageApplication();
   if (!silent) loading('/', 'Home');
@@ -221,19 +246,30 @@ async function pageHome(silent) {
     pageHome(true);
   });
   const z = d.zone;
-  shell('/', `Hello, ${S.me.user.name.split(' ')[0]}`,
-    h('div', { class: `card ${d.online ? 'accent' : ''}` }, h('div', { class: 'switch' }, h('div', null, h('h2', null, d.online ? 'You are online' : 'You are offline'), h('div', { class: 'small muted' }, d.online ? 'Waiting for delivery offers in your zone.' : 'Go online to receive delivery offers.')), toggle),
-      d.online_blockers.length && !d.online ? h('div', { class: 'note warn', style: 'margin-top:10px' }, d.online_blockers.join(' ')) : null),
+  const firstName = S.me.user.name.split(' ')[0];
+  shell('/', `Hello, ${firstName}`,
+    h('section', { class: `card hero stack ${d.online ? '' : 'offline'}` },
+      h('div', { class: 'row between top' },
+        h('div', null, h('div', { class: 'hero-eyebrow' }, h('span', { class: `status-dot ${d.online ? 'on' : ''}` }), d.online ? 'You are online' : 'You are offline'),
+          h('h1', null, d.online ? 'Ready for your next delivery?' : 'Go online to start earning'),
+          h('p', { class: 'small' }, d.online ? (d.active ? 'Finish your active delivery, then new offers appear here.' : 'Waiting for delivery offers in your zone — keep the app open.') : 'Turn availability on to receive delivery offers near you.')),
+        toggle),
+      d.online_blockers.length && !d.online ? h('div', { class: 'note warn', style: 'margin-top:2px' }, d.online_blockers.join(' ')) : null,
+      h('div', { class: 'grid g2', style: 'gap:10px' },
+        h('div', { class: 'hero-stat' }, h('span', null, "Today's deliveries"), h('b', null, d.today.completed)),
+        h('div', { class: 'hero-stat' }, h('span', null, "Today's earnings"), h('b', null, money(d.today.earnings))),
+        h('div', { class: 'hero-stat' }, h('span', null, 'Rating'), h('b', null, d.rating ? `${d.rating} ★` : '—')),
+        h('div', { class: 'hero-stat' }, h('span', null, 'Wallet'), h('b', null, money(d.wallet_available ?? 0))))),
     d.online ? geoNote() : null,
     d.offer ? offerCard(d.offer, () => pageHome(true)) : null,
     d.active ? taskSummary(d.active) : null,
-    h('div', { class: 'grid g2' }, stat("Today's deliveries", d.today.completed), stat("Today's earnings", money(d.today.earnings))),
-    d.cash_in_hand > 0 ? h('a', { class: 'card warn row between', href: '#/earnings', style: 'text-decoration:none;color:inherit' }, h('span', null, 'Cash to deposit'), h('strong', null, money(d.cash_in_hand))) : null,
+    !d.offer && !d.active && d.online ? h('div', { class: 'card flat stack tight center', style: 'padding:26px 18px;border-style:dashed' }, icon('deliveries'), h('strong', null, 'Listening for offers'), h('p', { class: 'small muted' }, 'Offers are sent to partners near the pickup point. Stay online and keep your location on.')) : null,
+    d.cash_in_hand > 0 ? h('a', { class: 'spotlight yellow', href: '#/earnings', style: 'text-decoration:none' }, h('span', { class: 'spot-ico' }, icon('wallet')), h('div', { class: 'grow' }, h('strong', null, 'Cash to deposit'), h('div', { class: 'small' }, 'Deposit to unlock more cash orders')), h('b', { style: 'font-size:18px' }, money(d.cash_in_hand))) : null,
     card('Your zone', z ? [h('div', { class: 'row between' }, h('strong', null, `${z.name}, ${z.city}`), statusBadge(z.status, z.status === 'active' ? 'Open' : 'Suspended')),
       plot([d.location && d.online ? { lat: d.location.lat, lng: d.location.lng, label: 'You', kind: 'partner' } : null], [{ lat: z.center_lat, lng: z.center_lng, km: z.radius_km, label: z.name }], { height: 240 }),
       h('div', { class: 'small muted' }, d.online ? (d.location ? `Your location was updated ${ago(d.location.at)}.` : 'Waiting for your first location update.') : 'Your location is not collected while you are offline.'),
-      d.online ? testLocation([{ label: `${z.name} centre`, lat: z.center_lat, lng: z.center_lng }], () => pageHome(true)) : null] : empty('No operating zone chosen.')),
-    d.notifications.length ? card('Latest alerts', h('ol', { class: 'tl' }, d.notifications.map((n) => h('li', null, h('div', { class: 't1' }, n.title), h('div', { class: 't2' }, [ago(n.created_at), n.body].filter(Boolean).join(' · '))))), h('a', { href: '#/notifications', class: 'small' }, 'All alerts')) : null);
+      d.online ? testLocation([{ label: `${z.name} centre`, lat: z.center_lat, lng: z.center_lng }], () => pageHome(true)) : null] : empty('No operating zone chosen.', 'zones')),
+    d.notifications.length ? card(h('div', { class: 'row between' }, h('h2', null, 'Latest alerts'), h('a', { class: 'small', href: '#/notifications' }, 'All alerts')), h('ol', { class: 'tl' }, d.notifications.map((n) => h('li', null, h('div', { class: 't1' }, n.title), h('div', { class: 't2' }, [ago(n.created_at), n.body].filter(Boolean).join(' · ')))))) : null);
   return undefined;
 }
 
@@ -257,13 +293,13 @@ async function pageTask(code, silent) {
   const backToSeller = d.kind === 'forward' && d.status === 'return_in_progress';
   const beforePickup = ['partner_assigned', 'en_route_to_pickup', 'arrived_at_pickup', 'pickup_verification_pending'].includes(d.status);
   const giver = isReturn ? 'customer' : 'seller';
-  const pickupCard = card(isReturn ? 'Collect from customer' : backToSeller ? 'Return to seller' : 'Pickup', h('strong', null, d.pickup.name), h('div', null, d.pickup.address),
+  const pickupCard = card(h('div', { class: 'row nowrapx' }, h('span', { class: 'pin-badge b' }), h('span', null, isReturn ? 'Collect from customer' : backToSeller ? 'Return to seller' : 'Pickup')), h('strong', null, d.pickup.name), h('div', null, d.pickup.address),
     d.pickup.instructions ? note(`Pickup instructions: ${d.pickup.instructions}`) : null,
     h('div', { class: 'row' }, mapsLink(d.pickup.lat, d.pickup.lng, 'Navigate to pickup'), d.pickup.contact ? h('a', { class: 'btn', href: `tel:${d.pickup.contact}` }, 'Call seller') : null),
     d.pickup.contact_masked ? h('div', { class: 'small muted' }, `Customer contact ${d.pickup.contact_masked} — ask support to connect you.`) : null);
   const dropCard = d.drop.approximate
     ? card(isReturn ? 'Deliver to seller' : 'Customer', h('div', null, `Drop area: `, h('strong', null, d.drop.area)), h('div', { class: 'small muted' }, 'The full address is shown after pickup is confirmed.'))
-    : card(isReturn ? 'Deliver to seller' : 'Customer', h('strong', null, d.drop.name), h('div', null, d.drop.address), d.drop.instructions ? note(`Delivery instructions: ${d.drop.instructions}`) : null,
+    : card(h('div', { class: 'row nowrapx' }, h('span', { class: 'pin-badge' }), h('span', null, isReturn ? 'Deliver to seller' : 'Customer')), h('strong', null, d.drop.name), h('div', null, d.drop.address), d.drop.instructions ? note(`Delivery instructions: ${d.drop.instructions}`) : null,
       d.contactless ? badge('Contactless delivery requested', 'info') : null,
       h('div', { class: 'row' }, mapsLink(d.drop.lat, d.drop.lng, 'Navigate to drop'), d.drop.contact ? h('a', { class: 'btn', href: `tel:${d.drop.contact}` }, 'Call seller') : null),
       d.drop.phone_masked ? h('div', { class: 'small muted' }, `Customer contact ${d.drop.phone_masked}. The number is masked — use Support to reach the customer.`) : null);
@@ -274,16 +310,18 @@ async function pageTask(code, silent) {
   const failedAttempt = () => formModal('Report a failed delivery attempt', [{ name: 'reason', label: 'What happened?', type: 'select', required: true, options: ['Customer unavailable', 'Incorrect delivery address', 'Customer refused the order', 'Could not reach the address', 'Other'] }, { name: 'note', label: 'Details', type: 'textarea', max: 200 }],
     { submit: 'Report failed attempt', danger: true, intro: 'Keep the package safe. The operations team will tell you whether to try again or return it to the seller.', onSubmit: async (v) => { await api(`/api/deliveries/${code}/failed-attempt`, { method: 'POST', body: v }); refresh(); } });
   let action;
-  if (d.status === 'partner_assigned') action = card('Next step', h('p', null, 'Head to the pickup point.'), btn('Start trip to pickup', post('start'), 'primary big block'), btn('I cannot do this delivery', release, 'danger block'));
-  else if (d.status === 'en_route_to_pickup') action = card('Next step', h('p', null, `Confirm when you reach the pickup point. Arrival is checked by GPS (within ${S.config.geofence_m} m).`), btn('I have arrived at pickup', post('arrived-at-pickup', {}, 'Arrival confirmed.'), 'primary big block'), btn('I cannot do this delivery', release, 'danger block'));
+  if (d.status === 'partner_assigned') action = h('section', { class: 'card hero stack' }, h('span', { class: 'hero-eyebrow' }, 'Next step'), h('h2', null, 'Head to the pickup point'), h('p', { class: 'small' }, `${d.pickup.name} · ${d.distance_km} km trip`), btn('Start trip to pickup', post('start'), 'yellow big block'), btn('I cannot do this delivery', release, 'on-dark block'));
+  else if (d.status === 'en_route_to_pickup') action = h('section', { class: 'card hero stack' }, h('span', { class: 'hero-eyebrow' }, 'On the way'), h('h2', null, 'Arrived at the pickup point?'), h('p', { class: 'small' }, `Confirm when you reach the pickup point. Arrival is checked by GPS (within ${S.config.geofence_m} m).`), btn('I have arrived at pickup', post('arrived-at-pickup', {}, 'Arrival confirmed.'), 'yellow big block'), btn('I cannot do this delivery', release, 'on-dark block'));
   else if (d.status === 'arrived_at_pickup') action = card('Waiting for the seller', note(`The seller has not marked the order ready yet${d.expected_ready_at ? ` (expected about ${clock(d.expected_ready_at)})` : ''}. This screen updates when it is ready.`, 'warn'), h('a', { class: 'btn block', href: '#/support/new?category=seller_not_ready&delivery=' + code }, 'Report: seller not ready'));
   else if (d.status === 'pickup_verification_pending' && !d.pickup_verified) action = card('Verify the pickup', h('p', { class: 'small muted' }, `Ask the ${giver} for the 4-digit pickup PIN and count the packages. ${isReturn ? '' : 'The seller can also confirm the handover from their dashboard.'}`),
     h('div', { class: 'small' }, 'Items: ', d.items.length ? d.items.map((i) => `${i.qty} × ${i.title}`).join(', ') : `${d.package_count} package(s)`),
     form([{ name: 'code', label: 'Pickup PIN', required: true, code: true, max: 4, inputmode: 'numeric' }, { name: 'package_count', label: 'Number of packages received', type: 'number', required: true, min: 1 }],
       { submit: 'Verify pickup', onSubmit: async (v) => { await api(`/api/deliveries/${code}/verify-pickup`, { method: 'POST', body: { method: 'pin', ...v } }); toast('Pickup verified.', 'ok'); refresh(); } }));
   else if (d.status === 'pickup_verification_pending') action = card('Pickup verified', note('The handover is verified. Confirm that you have the package to see the delivery address.', 'ok'), btn('Confirm pickup and start delivery', post('picked-up'), 'primary big block'));
-  else if (d.status === 'picked_up' || d.status === 'en_route_to_customer') action = card('Next step', h('p', null, `Ride to the ${isReturn ? 'seller' : 'customer'}. Arrival is checked by GPS.`), btn(`I have arrived at the ${isReturn ? 'seller' : 'customer'}`, post('arrived-at-destination', {}, 'Arrival confirmed.'), 'primary big block'), isReturn ? null : btn('Cannot deliver', failedAttempt, 'danger block'));
-  else if (d.status === 'return_in_progress' && !d.arrived_at_destination) action = card('Return the package', h('p', null, 'Carry the package back to the pickup point. Arrival is checked by GPS.'), btn('I have arrived at the seller', post('arrived-at-destination', {}, 'Arrival confirmed.'), 'primary big block'));
+  else if (d.status === 'picked_up' || d.status === 'en_route_to_customer') action = h('section', { class: 'card hero stack' }, h('span', { class: 'hero-eyebrow' }, 'Package in hand'), h('h2', null, `Ride to the ${isReturn ? 'seller' : 'customer'}`),
+    h('div', { class: 'leg' }, h('span', { class: 'pin' }), h('div', null, h('strong', null, d.drop.approximate ? `Drop area: ${d.drop.area}` : d.drop.name), h('div', { class: 'small muted' }, d.drop.approximate ? 'Full address shown after pickup confirmation.' : d.drop.address))),
+    h('p', { class: 'small' }, 'Arrival is checked by GPS.'), btn(`I have arrived at the ${isReturn ? 'seller' : 'customer'}`, post('arrived-at-destination', {}, 'Arrival confirmed.'), 'yellow big block'), isReturn ? null : btn('Cannot deliver', failedAttempt, 'on-dark block'));
+  else if (d.status === 'return_in_progress' && !d.arrived_at_destination) action = h('section', { class: 'card hero stack' }, h('span', { class: 'hero-eyebrow' }, 'Return in progress'), h('h2', null, 'Carry the package back'), h('p', { class: 'small' }, 'Take the package back to the pickup point. Arrival is checked by GPS.'), btn('I have arrived at the seller', post('arrived-at-destination', {}, 'Arrival confirmed.'), 'yellow big block'));
   else if (['arrived_at_destination', 'delivery_verification_pending', 'return_in_progress'].includes(d.status)) {
     const toSeller = backToSeller || isReturn;
     if (!d.proof) {
@@ -308,8 +346,11 @@ async function pageTask(code, silent) {
     kv([['Delivery ID', d.code], ['Order ID', d.order_code], ['Distance', `${d.distance_km} km`], ['Completed', dt(d.completed_at)], ['Base', money(d.earning_breakdown.base)], ['Distance pay', money(d.earning_breakdown.distance)], d.earning_breakdown.incentive ? ['Incentive', money(d.earning_breakdown.incentive)] : null, ['Customer feedback', d.feedback === 'received' ? 'Received' : 'Not yet given']]),
     d.payment_type === 'cod' ? note('This was a cash order: the earning is released to your wallet when your cash deposit is confirmed.', 'warn') : null, h('a', { class: 'btn primary block', href: '#/' }, 'Back to home'));
   else action = card(null, note(`This delivery is ${d.status_label.toLowerCase()}.`));
+  const STAGES = ['partner_assigned', 'en_route_to_pickup', 'picked_up', 'arrived_at_destination', 'delivered'];
+  const stageAt = Math.max(0, ['arrived_at_pickup', 'pickup_verification_pending'].includes(d.status) ? 1 : STAGES.indexOf(d.status));
   shell('/tasks', `Delivery ${d.code}`,
-    h('div', { class: 'row between' }, h('span', { class: 'muted small' }, `Order ${d.order_code} · ${d.category_label}`), h('span', { class: 'row' }, demoTag(d.is_demo), statusBadge(d.status, d.status_label))),
+    h('div', { class: 'row between' }, h('span', { class: 'muted small' }, `Order ${d.order_code} · ${d.category_label}`), h('span', { class: 'row nowrapx' }, demoTag(d.is_demo), statusBadge(d.status, d.status_label))),
+    h('div', { class: 'steps', role: 'img', 'aria-label': `Delivery stage: ${d.status_label}` }, STAGES.map((x, i) => h('span', { class: i <= stageAt ? 'on' : '' }))),
     action, open ? geoNote() : null, open ? testLocation(testPts, refresh) : null,
     open ? (beforePickup || backToSeller ? [pickupCard, dropCard] : [dropCard, pickupCard]) : null,
     open ? card('Route', plot(pts.map((p, i) => (p && i === 0 && pts[1] ? { ...p, to: pts[1] } : p))), plotLegend(['pickup', 'drop'])) : null,
@@ -354,24 +395,26 @@ async function pageEarnings() {
       const e = await api('/api/partners/earnings');
       const max = Math.max(1, ...e.daily.map((x) => x.total));
       const split = (x) => kv([['Base earnings', money(x.base)], ['Distance earnings', money(x.distance)], ['Incentives', money(x.incentive)], ['Tips', e.tips_supported ? money(x.tip) : 'Not offered yet'], ['Adjustments', money(x.adjustment)], ['Completed deliveries', x.completed]]);
-      body = [h('div', { class: 'grid g2' }, stat('Today', money(e.today.total), `${e.today.completed} deliveries`), stat('Last 7 days', money(e.week.total), `${e.week.completed} deliveries`)),
+      body = [h('div', { class: 'grid g2' }, stat('Today', money(e.today.total), `${e.today.completed} deliveries`, 'dark'), stat('Last 7 days', money(e.week.total), `${e.week.completed} deliveries`, 'tinted')),
         card('Last 7 days', h('div', { class: 'bars', role: 'img', 'aria-label': e.daily.map((x) => `${day(x.day)}: ${money(x.total)}`).join(', ') }, e.daily.map((x) => h('div', null, h('span', null, x.total ? money(x.total) : ''), h('i', { style: `height:${(x.total / max) * 78}%` }), h('span', null, new Date(`${x.day}T00:00:00+05:30`).toLocaleDateString('en-IN', { weekday: 'short' }))))), split(e.week)),
         card('Today', split(e.today)),
-        card('Wallet', h('div', { class: 'grid g2' }, stat('Available balance', money(e.wallet.available), 'Ready for the next payout'), stat('Pending', money(e.wallet.pending), 'Held until cash is deposited'), stat('In payout', money(e.wallet.in_payout)), stat('Paid out', money(e.wallet.paid))),
-          h('p', { class: 'small muted' }, e.payout_schedule), e.payout_account_status !== 'verified' ? note('Your payout account is not verified yet. Payouts start after verification.', 'warn') : null),
+        card(h('div', { class: 'row between' }, h('h2', null, 'Wallet'), badge(e.payout_account_status === 'verified' ? 'Payout account verified' : 'Payout account not verified', e.payout_account_status === 'verified' ? 'ok' : 'warn')),
+          h('div', { class: 'card hero stack tight', style: 'padding:16px' }, h('span', { class: 'hero-eyebrow' }, 'Available to pay out'), h('div', { style: 'font:800 30px var(--display);letter-spacing:-.03em;color:#fff' }, money(e.wallet.available)), h('div', { class: 'small' }, e.payout_schedule)),
+          h('div', { class: 'grid g3 collapse' }, stat('Pending', money(e.wallet.pending), 'Held until cash is deposited'), stat('In payout', money(e.wallet.in_payout)), stat('Paid out', money(e.wallet.paid))),
+          e.payout_account_status !== 'verified' ? note('Your payout account is not verified yet. Payouts start after verification.', 'warn') : null),
         e.adjustments.length ? card('Adjustments', table([{ label: 'Date', render: (a) => day(a.created_at) }, { label: 'Reason', render: (a) => `${a.reason}${a.delivery_code ? ` (${a.delivery_code})` : ''}` }, { label: 'Amount', right: true, render: (a) => money(a.amount) }], e.adjustments)) : null];
     } else if (tab === 'statement') {
       const range = currentRoute().query.range || '30d';
       const t = await api('/api/partners/transactions', { query: { range } });
-      body = [tabs(RANGES, range, (k) => go(`/earnings?tab=statement&range=${k}`)), h('div', { class: 'row between' }, h('span', { class: 'small muted' }, t.range.label), h('a', { class: 'btn sm', href: `/api/partners/statement.csv?range=${range}`, download: '' }, 'Download CSV')),
-        table([{ label: 'Transaction', render: (x) => h('div', null, h('div', { class: 'mono small' }, x.txn_code), h('div', { class: 'small muted' }, dt(x.created_at))) }, { label: 'For', render: (x) => h('div', null, x.delivery_code || '—', h('div', { class: 'small muted' }, `${x.type} · ${x.note || ''}`)) },
+      body = [tabs(RANGES, range, (k) => go(`/earnings?tab=statement&range=${k}`)), h('div', { class: 'row between' }, h('span', { class: 'small muted' }, t.range.label), h('a', { class: 'btn sm', href: `/api/partners/statement.csv?range=${range}`, download: '' }, icon('download'), 'CSV')),
+        table([{ label: 'Transaction', render: (x) => h('div', null, h('div', { class: 'mono small strong' }, x.txn_code), h('div', { class: 'small muted' }, dt(x.created_at))) }, { label: 'For', render: (x) => h('div', null, x.delivery_code || '—', h('div', { class: 'small muted' }, `${x.type} · ${x.note || ''}`)) },
           { label: 'Amount', right: true, render: (x) => h('div', null, h('strong', null, money(x.amount)), h('div', null, statusBadge(x.status, x.status === 'in_payout' ? `In ${x.payout_code}` : null))) }], t.transactions, { emptyText: 'No transactions in this period.' })];
     } else if (tab === 'payouts') {
       const p = await api('/api/partners/payouts');
       body = [table([{ label: 'Payout', render: (x) => h('div', null, h('strong', null, x.code), h('div', { class: 'small muted' }, dt(x.created_at))) }, { label: 'Status', render: (x) => h('div', null, statusBadge(x.status), h('div', { class: 'small muted' }, x.status === 'paid' ? `Ref ${x.reference} · ${dt(x.settled_at)}` : x.failure_reason || '')) }, { label: 'Amount', right: true, render: (x) => money(x.amount) }], p.payouts, { emptyText: 'No payouts yet.' })];
     } else {
       const c = await api('/api/partners/cod');
-      body = [h('div', { class: 'grid g2' }, stat('Cash you hold', money(c.cash_in_hand)), stat('Cash limit', money(c.limit), 'Cash orders pause above this')), note(c.instructions),
+      body = [h('div', { class: 'grid g2' }, stat('Cash you hold', money(c.cash_in_hand), null, 'yellow'), stat('Cash limit', money(c.limit), 'Cash orders pause above this')), note(c.instructions),
         c.cash_in_hand > 0 ? card('Record a deposit', form([{ name: 'amount', label: 'Amount deposited (₹)', type: 'number', required: true, value: c.cash_in_hand, step: '0.01' }, { name: 'method', label: 'How', type: 'select', required: true, options: [['hub_cash', 'Cash at zone hub'], ['bank_transfer', 'Bank transfer'], ['upi', 'UPI']] }, { name: 'reference', label: 'Receipt or transaction reference', required: true }],
           { submit: 'Record deposit', onSubmit: async (v) => { const r = await api('/api/partners/cod/deposits', { method: 'POST', body: v }); toast(`Deposit ${r.code} recorded. Awaiting confirmation.`, 'ok'); pageEarnings(); } })) : null,
         table([{ label: 'Record', render: (x) => h('div', null, h('strong', null, x.type === 'collection' ? 'Collected' : 'Deposit'), h('div', { class: 'small muted' }, `${x.code} · ${dt(x.created_at)}${x.delivery_code ? ` · ${x.delivery_code}` : ''}`)) }, { label: 'Status', render: (x) => statusBadge(x.status) }, { label: 'Amount', right: true, render: (x) => money(x.amount) }], c.transactions, { emptyText: 'No cash-on-delivery records.' })];
@@ -389,13 +432,17 @@ async function pagePerformance() {
   try {
     const p = await api('/api/partners/performance');
     shell('/performance', 'Performance', h('div', { class: 'small muted' }, p.period),
-      h('div', { class: 'grid g2' }, stat('Completed deliveries', p.completed), stat('Customer rating', p.rating ? `${p.rating} ★` : '—', p.rating_count ? `${p.rating_count} ratings` : 'No ratings yet'), stat('Offer acceptance', pct(p.acceptance_rate), `${p.offers_accepted} of ${p.offers_received} offers`),
-        stat('Average delivery time', val(p.average_minutes, ' min'), 'From assignment to delivery'), stat('Failed attempts', p.failed_attempts), stat('Online time', `${p.online_hours} h`)), note(p.note));
+      h('div', { class: 'card hero stack tight' }, h('span', { class: 'hero-eyebrow' }, 'Your standing'), h('h2', null, p.rating ? `${p.rating} ★ customer rating` : 'Your first rating is on its way'),
+        h('p', { class: 'small' }, p.rating_count ? `${p.rating_count} customers rated your deliveries.` : 'Complete a few deliveries to build your rating.'),
+        h('div', { class: 'grid g2', style: 'gap:10px' }, h('div', { class: 'hero-stat' }, h('span', null, 'Completed'), h('b', null, p.completed)), h('div', { class: 'hero-stat' }, h('span', null, 'Acceptance'), h('b', null, pct(p.acceptance_rate))))),
+      stat('Average delivery time', val(p.average_minutes, ' min'), 'From assignment to delivery'),
+      h('div', { class: 'grid g2' }, stat('Failed attempts', p.failed_attempts), stat('Online time', `${p.online_hours} h`), stat('Offers accepted', `${p.offers_accepted} of ${p.offers_received}`), stat('Ratings', p.rating_count || 0)), note(p.note));
   } catch (e) { failed('/performance', 'Performance', e, pagePerformance); }
   return undefined;
 }
 
 /* ---------- Support ---------- */
+const SUPPORT_ICONS = { pickup_unreachable: 'zones', seller_not_ready: 'clock', customer_unavailable: 'me', package_damage: 'package', payment: 'wallet', safety: 'shield' };
 async function pageSupport(parts, query) {
   S.refresh = null;
   const cats = S.config.ticket_categories;
@@ -404,7 +451,8 @@ async function pageSupport(parts, query) {
       { name: 'category', label: 'What is the problem?', type: 'select', required: true, value: query.category || '', options: [['', 'Choose'], ...Object.entries(cats)] },
       { name: 'delivery_code', label: 'Delivery ID', value: query.delivery, hint: 'If this is about one delivery.' }, { name: 'description', label: 'Describe what happened', type: 'textarea', required: true, max: 1500 },
     ], { submit: 'Send to support', intro: 'For a safety incident choose "Safety incident" — it is marked urgent and shown to the operations team at once. In an emergency call 112 first.',
-      onSubmit: async (v) => { const r = await api('/api/partners/tickets', { method: 'POST', body: v }); toast(`Ticket ${r.code} created.`, 'ok'); go(`/support/${r.code}`); } })), h('a', { href: '#/support' }, 'Back to my tickets'));
+      onSubmit: async (v) => { const r = await api('/api/partners/tickets', { method: 'POST', body: v }); toast(`Ticket ${r.code} created.`, 'ok'); go(`/support/${r.code}`); } })),
+      h('a', { class: 'btn block', href: '#/support' }, '← Back to my tickets'));
   }
   loading('/support', 'Support');
   try {
@@ -412,14 +460,17 @@ async function pageSupport(parts, query) {
       const { ticket: t } = await api(`/api/partners/tickets/${parts[1]}`);
       const input = h('input', { type: 'file', class: 'input', accept: 'image/*,application/pdf', 'aria-label': 'Evidence file' });
       return shell('/support', `Ticket ${t.code}`, h('div', { class: 'row between' }, badge(t.category_label, 'info'), statusBadge(t.status)), card(t.subject, h('p', null, t.description), h('div', { class: 'small muted' }, `${dt(t.created_at)}${t.delivery_code ? ` · ${t.delivery_code}` : ''}`)),
-        card('Conversation', t.messages.length ? t.messages.map((m) => h('div', { class: `note ${m.author_type === 'support' ? 'ok' : ''}` }, h('strong', null, m.author_type === 'support' ? 'Support' : 'You'), ` · ${dt(m.created_at)}`, h('div', null, m.body))) : empty('No replies yet. Support will answer here.'),
+        card('Conversation', t.messages.length ? t.messages.map((m) => h('div', { class: `note ${m.author_type === 'support' ? 'ok' : ''}` }, h('strong', null, m.author_type === 'support' ? 'Support' : 'You'), ` · ${dt(m.created_at)}`, h('div', null, m.body))) : empty('No replies yet. Support will answer here.', 'support'),
           form([{ name: 'body', label: 'Add a message', type: 'textarea', required: true, max: 1500 }], { submit: 'Send', onSubmit: async (v) => { await api(`/api/partners/tickets/${t.code}/messages`, { method: 'POST', body: v }); pageSupport(parts, query); } })),
-        card('Evidence', t.has_evidence ? note('A file is attached to this ticket.', 'ok') : h('p', { class: 'small muted' }, 'Attach a photo or PDF (up to 5 MB).'), h('div', { class: 'row' }, h('div', { class: 'grow' }, input),
-          btn(t.has_evidence ? 'Replace' : 'Attach', async (b) => { const r = await act(b, async () => api(`/api/partners/tickets/${t.code}/evidence`, { method: 'POST', raw: await readFileInput(input) }), 'Evidence attached.'); if (r) pageSupport(parts, query); }))), h('a', { href: '#/support' }, 'Back to my tickets'));
+        card('Evidence', t.has_evidence ? note('A file is attached to this ticket.', 'ok') : h('p', { class: 'small muted' }, 'Attach a photo or PDF (up to 5 MB).'), h('div', { class: 'row nowrapx' }, h('div', { class: 'grow' }, input),
+          btn(t.has_evidence ? 'Replace' : 'Attach', async (b) => { const r = await act(b, async () => api(`/api/partners/tickets/${t.code}/evidence`, { method: 'POST', raw: await readFileInput(input) }), 'Evidence attached.'); if (r) pageSupport(parts, query); }, 'primary'))), h('a', { class: 'btn block', href: '#/support' }, '← Back to my tickets'));
     }
     const { tickets } = await api('/api/partners/tickets');
-    return shell('/support', 'Support', h('a', { class: 'btn primary block', href: '#/support/new' }, 'Report an issue'), h('div', { class: 'grid g2' }, ['pickup_unreachable', 'seller_not_ready', 'customer_unavailable', 'package_damage', 'payment', 'safety'].filter((k) => cats[k]).map((k) => h('a', { class: 'btn', href: `#/support/new?category=${k}` }, cats[k]))),
-      h('h2', null, 'My tickets'), tickets.length ? tickets.map((t) => h('a', { class: 'card stack tight', href: `#/support/${t.code}`, style: 'text-decoration:none;color:inherit' }, h('div', { class: 'row between' }, h('strong', null, t.subject), statusBadge(t.status)), h('div', { class: 'small muted' }, `${t.code} · updated ${ago(t.updated_at)}`))) : empty('You have not raised any tickets.'));
+    return shell('/support', 'Support',
+      h('section', { class: 'spotlight' }, h('span', { class: 'spot-ico' }, icon('support')), h('div', { class: 'grow' }, h('strong', null, 'Need help on a delivery?'), h('div', { class: 'small muted' }, 'Support usually answers within a few minutes while you are on a task.')), btn('Report an issue', () => go('/support/new'), 'yellow sm')),
+      h('div', { class: 'grid g2' }, ['pickup_unreachable', 'seller_not_ready', 'customer_unavailable', 'package_damage', 'payment', 'safety'].filter((k) => cats[k]).map((k) => h('a', { class: 'btn', href: `#/support/new?category=${k}`, style: 'justify-content:flex-start' }, icon(SUPPORT_ICONS[k] || 'help'), cats[k]))),
+      h('div', { class: 'section-title' }, h('h2', null, 'My tickets')),
+      tickets.length ? tickets.map((t) => h('a', { class: 'card stack tight', href: `#/support/${t.code}`, style: 'text-decoration:none;color:inherit' }, h('div', { class: 'row between' }, h('strong', null, t.subject), statusBadge(t.status)), h('div', { class: 'small muted' }, `${t.code} · updated ${ago(t.updated_at)}`))) : empty('You have not raised any tickets.', 'support'));
   } catch (e) { return failed('/support', 'Support', e, () => pageSupport(parts, query)); }
 }
 
@@ -432,17 +483,19 @@ async function pageProfile() {
     const [{ sessions }, { zones }] = await Promise.all([api('/api/partners/sessions'), api('/api/partners/zones')]);
     const { partner: p, user: u, vehicle, documents } = S.me;
     shell('/profile', 'Profile',
-      card(null, h('div', { class: 'row between' }, h('div', null, h('h2', null, u.name), h('div', { class: 'small muted' }, `Partner ID ${p.code}${p.fleet ? ` · ${p.fleet.name}` : ' · Individual partner'}`)), statusBadge(p.status, p.status_label)),
-        kv([['Mobile', u.mobile], ['Email', u.email], ['City', p.city], ['Language', p.language], ['Emergency contact', p.emergency_name ? `${p.emergency_name} · ${p.emergency_phone}` : null], ['Rating', p.rating ? `${p.rating} ★ (${p.rating_count})` : 'No ratings yet'], ['Approved', p.approved_at ? day(p.approved_at) : null], ['Documents valid until', p.documents_valid_until ? day(p.documents_valid_until) : null]]),
+      h('section', { class: 'card hero stack tight' },
+        h('div', { class: 'row between top' }, h('div', null, h('h2', null, u.name), h('div', { class: 'small muted' }, `Partner ID ${p.code}${p.fleet ? ` · ${p.fleet.name}` : ' · Individual partner'}`)), statusBadge(p.status, p.status_label)),
+        h('div', { class: 'grid g3 collapse', style: 'gap:10px' }, h('div', { class: 'hero-stat' }, h('span', null, 'Rating'), h('b', null, p.rating ? `${p.rating} ★` : '—')), h('div', { class: 'hero-stat' }, h('span', null, 'Deliveries rated'), h('b', null, p.rating_count || 0)), h('div', { class: 'hero-stat' }, h('span', null, 'Documents valid'), h('b', null, p.documents_valid_until ? day(p.documents_valid_until) : '—')))),
+      card('Contact details', kv([['Mobile', u.mobile], ['Email', u.email], ['City', p.city], ['Language', p.language], ['Emergency contact', p.emergency_name ? `${p.emergency_name} · ${p.emergency_phone}` : null], ['Approved', p.approved_at ? day(p.approved_at) : null]]),
         p.fleet_hold ? note('Your fleet manager has put your account on hold.', 'warn') : null),
-      card('Vehicle', vehicle ? kv([['Type', vehicle.label], ['Registration', vehicle.registration_no], ['Verification', statusBadge(vehicle.status)]]) : empty('No vehicle added.'), approved() ? h('p', { class: 'small muted' }, 'To change your vehicle, raise a support ticket — a new vehicle needs verification.') : null),
+      card('Vehicle', vehicle ? kv([['Type', vehicle.label], ['Registration', vehicle.registration_no], ['Verification', statusBadge(vehicle.status)]]) : empty('No vehicle added.', 'deliveries'), approved() ? h('p', { class: 'small muted' }, 'To change your vehicle, raise a support ticket — a new vehicle needs verification.') : null),
       approved() ? card('Operating zones', h('p', { class: 'small muted' }, 'You receive offers from the zones you select.'), (() => {
         const boxes = zones.map((z) => [z, h('input', { type: 'checkbox', checked: z.selected, id: `z${z.id}` })]);
         return h('div', { class: 'stack tight' }, boxes.map(([z, box]) => h('label', { class: 'check', for: `z${z.id}` }, box, h('span', null, `${z.name}, ${z.city} `, z.open_now ? badge('Open now', 'ok') : badge(z.status === 'active' ? `Opens ${z.open_time}` : 'Suspended', 'warn')))),
           btn('Save zones', async (b) => { const ids = boxes.filter(([, box]) => box.checked).map(([z]) => z.id); const r = await act(b, () => api('/api/partners/profile', { method: 'PATCH', body: { zone_ids: ids, home_zone_id: ids.includes(p.home_zone_id) ? p.home_zone_id : ids[0] } }), 'Zones saved.'); if (r) pageProfile(); }, 'primary'));
       })()) : null,
-      card('Documents', documents.length ? documents.map((d) => h('div', { class: 'row between' }, h('span', null, d.kind_label), statusBadge(d.status))) : empty('No documents uploaded.'), h('p', { class: 'small muted' }, 'Visible only to you and verification staff.')),
-      card('Payout account', p.payout ? kv([['Account holder', p.payout.holder], ['Bank', p.payout.bank], ['Account', `•••• ${p.payout.account_ending}`], ['IFSC', p.payout.ifsc], ['Verification', statusBadge(p.payout.status)]]) : empty('No payout account.'),
+      card('Documents', documents.length ? documents.map((d) => h('div', { class: 'row between' }, h('span', null, d.kind_label), statusBadge(d.status))) : empty('No documents uploaded.', 'shield'), h('p', { class: 'small muted' }, 'Visible only to you and verification staff.')),
+      card('Payout account', p.payout ? kv([['Account holder', p.payout.holder], ['Bank', p.payout.bank], ['Account', `•••• ${p.payout.account_ending}`], ['IFSC', p.payout.ifsc], ['Verification', statusBadge(p.payout.status)]]) : empty('No payout account.', 'wallet'),
         btn(p.payout ? 'Change payout account' : 'Add payout account', () => formModal('Payout account', [{ name: 'holder', label: 'Account holder name', required: true }, { name: 'bank', label: 'Bank name', required: true }, { name: 'account', label: 'Account number', required: true, inputmode: 'numeric' }, { name: 'ifsc', label: 'IFSC', required: true, max: 11 }],
           { submit: 'Save', intro: 'A changed account must be verified again before payouts resume.', onSubmit: async (v) => { await api('/api/partners/payout', { method: 'PUT', body: v }); toast('Payout account saved.', 'ok'); pageProfile(); } }))),
       card('Signed-in devices', sessions.map((s) => h('div', { class: 'row between' }, h('div', { class: 'grow' }, h('div', { class: 'small' }, (s.user_agent || 'Unknown device').slice(0, 60)), h('div', { class: 'tiny muted' }, `Last active ${ago(s.last_seen_at)}`)), s.current ? badge('This device', 'ok') : btn('Sign out', async (b) => { const r = await act(b, () => api(`/api/partners/sessions/${s.id}`, { method: 'DELETE' })); if (r) pageProfile(); }, 'sm')))),
@@ -455,7 +508,7 @@ async function pageNotifications() {
   try {
     const { notifications } = await api('/api/partners/notifications');
     if (S.me.unread_notifications) { await api('/api/partners/notifications/read', { method: 'POST' }); S.me.unread_notifications = 0; }
-    shell('', 'Alerts', notifications.length ? card(null, h('ol', { class: 'tl' }, notifications.map((n) => h('li', null, h('div', { class: 't1' }, n.title, n.read_at ? null : [' ', badge('New', 'info')]), h('div', { class: 't2' }, [dt(n.created_at), n.body].filter(Boolean).join(' · ')))))) : empty('No alerts yet.'));
+    shell('', 'Alerts', notifications.length ? card(null, h('ol', { class: 'tl' }, notifications.map((n) => h('li', { class: 'done' }, h('div', { class: 't1' }, n.title, n.read_at ? null : [' ', badge('New', 'info')]), h('div', { class: 't2' }, [dt(n.created_at), n.body].filter(Boolean).join(' · ')))))) : empty('No alerts yet.', 'bell'));
   } catch (e) { failed('', 'Alerts', e, pageNotifications); }
 }
 

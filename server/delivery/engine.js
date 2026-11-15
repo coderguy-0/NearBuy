@@ -93,7 +93,7 @@ function onOrderChanged(sellerId, orderId, user) {
   if (!d) return;
   const actor = { type: 'seller', name: user && user.name, userId: user && user.id };
   const shipment = get('SELECT id, carrier FROM shipments WHERE order_id = ?', order.id);
-  if (shipment && shipment.carrier !== 'Routely delivery network') run("UPDATE shipments SET carrier = 'Routely delivery network', reference = ? WHERE id = ?", d.code, shipment.id);
+  if (shipment && shipment.carrier !== 'NearBuy Delivery network') run("UPDATE shipments SET carrier = 'NearBuy Delivery network', reference = ? WHERE id = ?", d.code, shipment.id);
   if (order.status === 'cancelled' && !S.FINAL.includes(d.status)) cancelDelivery(d, actor, order.cancel_reason || 'Order cancelled by the seller');
   else if (order.status === 'ready_to_ship' && !d.ready_at) markReady(d, actor);
   else if (order.status === 'processing' && d.status === 'awaiting_assignment') C.notifyCustomer(d, 'preparing', 'Seller is preparing your order', null);
@@ -187,6 +187,31 @@ function offerNext(d) {
   C.notifyPartner(best.partner.id, 'new_offer', 'New delivery offer', `${S.CATEGORIES[d.category]} · ₹${d.partner_earning} · ${d.distance_km} km`, d.id);
   return C.setStatus(d, 'offer_sent', C.SYSTEM, `Offer #${offerId} sent to ${best.partner.code} (score ${best.score}, ${list.length} eligible).`);
 }
+/**
+ * Offer a delivery to one chosen partner instead of the best-scoring one.
+ * Used when the seller appoints a runner from their own discovery screen. The offer still expires, and acceptance
+ * still goes through the same atomic assignment, so two partners can never both win the delivery.
+ */
+function offerTo(d, partnerId, actor = C.SYSTEM) {
+  if (!S.UNASSIGNED.includes(d.status)) throw conflict('This delivery is no longer open for an offer.');
+  const partner = partnerById(partnerId);
+  if (!partner) throw conflict('Choose a delivery partner.');
+  const reasons = ineligibility(partner, d);
+  if (reasons.length) throw conflict(`${partner.code} cannot take this delivery right now: ${reasons.join(', ')}.`);
+  if (get("SELECT 1 FROM delivery_offers WHERE partner_id = ? AND status = 'offered' AND expires_at > ?", partner.id, nowIso())) throw conflict(`${partner.code} is already looking at another offer. Try again in a minute.`) ;
+  const zone = get('SELECT * FROM service_zones WHERE id = ?', d.zone_id);
+  const scored = scoreCandidate(partner, d, zone);
+  cancelLiveOffers(d);
+  const offerId = insert('delivery_offers', {
+    delivery_id: d.id, partner_id: partner.id, score: scored.score, score_detail: { ...scored.parts, appointed_by: actor.name || 'Seller' },
+    pickup_distance_km: scored.km, pickup_eta_min: r2(scored.eta), earning: d.partner_earning, earning_breakdown: parseJson(d.earning_breakdown, {}),
+    expires_at: new Date(Date.now() + C.CONFIG.offerSeconds() * 1000).toISOString(), created_at: nowIso(),
+  });
+  C.notifyPartner(partner.id, 'new_offer', 'New delivery offer', `${S.CATEGORIES[d.category]} · ₹${d.partner_earning} · ${d.distance_km} km`, d.id);
+  C.audit(actor, 'Appointed a delivery partner', 'delivery', d.code, `${partner.code} · offer #${offerId}`);
+  return C.setStatus(d, 'offer_sent', actor, `Offer #${offerId} sent to ${partner.code} at the seller's request.`);
+}
+
 function offerFailed(offer, status, note, reason) {
   run('UPDATE delivery_offers SET status = ?, responded_at = ?, decline_reason = ? WHERE id = ?', status, nowIso(), reason || null, offer.id);
   let d = one(offer.delivery_id);
@@ -596,7 +621,7 @@ function startBackground() {
 
 module.exports = {
   one, own, partnerById, vehicleOf, activeTask, serviceability, ensureDelivery, onOrderChanged, hasNetworkDelivery, orderAction, cashInHand, ineligibility,
-  candidates, dueForSearch, startSearch, offerNext, acceptOffer, declineOffer, cancelLiveOffers, manualAssign, assignTo, endAssignment, unassign, cancelDelivery, markReady,
+  candidates, dueForSearch, startSearch, offerNext, offerTo, acceptOffer, declineOffer, cancelLiveOffers, manualAssign, assignTo, endAssignment, unassign, cancelDelivery, markReady,
   startTrip, arrivedAtPickup, verifyPickup, hasPickupConfirmation, pickedUp, arrivedAtDestination, submitProof, validProof, complete, failAttempt,
   resolveFailed, customerConfirm, recordLocation, setOnline, reconcile, allocateDeposits, settleCollection, postEarnings, addProof, receiverCode,
   tick, housekeeping, startBackground, COD_CASH_LIMIT, PACKAGE_TYPE, DEFAULT_PREP,

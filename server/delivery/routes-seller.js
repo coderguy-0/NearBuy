@@ -40,6 +40,57 @@ route('GET', '/api/seller/deliveries', { perm: 'orders.read' }, (ctx) => {
   };
 });
 route('GET', '/api/seller/deliveries/:code', { perm: 'orders.read' }, (ctx) => ({ delivery: V.forSeller(sellerDelivery(ctx)) }));
+
+/* ---------- Find a runner (seller-side discovery and appointment) ---------- */
+/**
+ * Every partner in the delivery's zone with an explicit verdict, so the shop can compare partners and see why one
+ * is not eligible instead of guessing. Only the control tower used to have this view.
+ */
+route('GET', '/api/seller/deliveries/:code/candidates', { perm: 'orders.read' }, (ctx) => {
+  const d = sellerDelivery(ctx);
+  const open = S.UNASSIGNED.includes(d.status);
+  const scored = open ? E.candidates(d) : [];
+  const rows = all(`SELECT p.*, u.name FROM delivery_partners p JOIN users u ON u.id = p.user_id
+    WHERE p.status = 'approved' AND p.id IN (SELECT partner_id FROM partner_zones WHERE zone_id = ?)
+    ORDER BY p.online DESC, p.code`, d.zone_id);
+  const list = rows.map((p) => {
+    const hit = scored.find((s) => s.partner.id === p.id);
+    const vehicle = E.vehicleOf(p.id);
+    const reasons = E.ineligibility(p, d);
+    return {
+      code: p.code, name: p.name, online: Boolean(p.online),
+      vehicle: vehicle ? S.VEHICLES[vehicle.type].label : null,
+      vehicle_type: vehicle ? vehicle.type : null,
+      eligible: open && !reasons.length, reasons,
+      rating: p.rating_count ? r2(p.rating_sum / p.rating_count) : null, deliveries_done: p.rating_count || 0,
+      score: hit ? hit.score : null, pickup_km: hit ? r2(hit.km) : null, pickup_eta_min: hit ? Math.round(hit.eta) : null,
+      trip_eta_min: hit ? Math.round(hit.eta + C.travelMin(d.distance_km, 'two_wheeler')) : Math.round(C.travelMin(d.distance_km, 'two_wheeler')),
+      earning: d.partner_earning,
+    };
+  }).sort((a, b) => (b.eligible - a.eligible) || ((b.score || -1) - (a.score || -1)) || a.pickup_km - b.pickup_km);
+  return {
+    delivery: { code: d.code, status: d.status, status_label: C.label(d.status), category: S.CATEGORIES[d.category], distance_km: d.distance_km,
+      package_type: d.package_type, package_count: d.package_count, weight_kg: r2((d.weight_g || 0) / 1000), earning: d.partner_earning,
+      pickup_name: d.pickup_name, drop_area: d.drop_area, ready: Boolean(d.ready_at), open },
+    candidates: list,
+    eligible_count: list.filter((c) => c.eligible).length,
+  };
+});
+/** Appoint one runner: a time-limited offer to that partner, accepted in the partner app. */
+route('POST', '/api/seller/deliveries/:code/appoint', { perm: 'orders.write' }, (ctx) => {
+  const data = validate(ctx.body, { partner_code: { required: true, max: 20, label: 'Delivery partner' } });
+  return tx(() => {
+    const d = sellerDelivery(ctx);
+    const partner = get("SELECT * FROM delivery_partners WHERE code = ? AND status = 'approved'", data.partner_code);
+    if (!partner) throw notFound('Delivery partner');
+    if (!get('SELECT 1 FROM partner_zones WHERE partner_id = ? AND zone_id = ?', partner.id, d.zone_id)) throw conflict(`${partner.code} does not operate in this delivery zone.`);
+    const next = E.offerTo(d, partner.id, sellerActor(ctx));
+    return {
+      ok: true, message: `Offer sent to ${partner.code}. It expires in ${C.CONFIG.offerSeconds() / 60} minutes unless the partner accepts.`,
+      delivery: { code: next.code, status: next.status, status_label: C.label(next.status) },
+    };
+  });
+});
 /** One button for the seller: runs the order steps that are still outstanding up to the wanted stage. */
 function advanceOrder(ctx, d, target) {
   const { applyOrderAction } = require('../routes/orders');

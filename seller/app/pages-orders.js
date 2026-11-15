@@ -75,8 +75,64 @@ async function runOrderAction(code, action) {
   try { await post(); } catch (err) { toast(err.message, 'error'); }
 }
 
+/* ---------- Fulfilment: deliver myself, store pickup, or find a NearBuy runner ---------- */
+const FULFILMENT_LABEL = { network: 'NearBuy delivery partner', self: 'My shop delivers', pickup: 'Store pickup' };
+
+function codeEntry({ title, help, action, label }) {
+  const input = h('input.input', { placeholder: '4-digit code', inputmode: 'numeric', maxlength: '8', 'aria-label': title });
+  const button = h('button.btn.primary', { type: 'button', disabled: true }, label);
+  input.addEventListener('input', () => { button.disabled = input.value.trim().length < 4; });
+  button.addEventListener('click', () => {
+    busy(button, async () => {
+      try {
+        const res = await api(action.path, { method: 'POST', body: { code: input.value.trim() } });
+        toast(res.message || 'Confirmed.', 'success');
+        input.value = '';
+        button.disabled = true;
+        reload();
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  });
+  return h('div.stack.sm', h('p.small.muted', help), h('div.row', input, button));
+}
+
+function fulfilmentCard(f, order) {
+  if (!f) return null;
+  const modeBadge = badge(FULFILMENT_LABEL[f.mode] || f.mode, f.mode === 'pickup' ? 'violet' : f.mode === 'self' ? 'green' : 'blue');
+  const steps = h('div.steps', f.steps.map((step) => h(`div.step${step.done ? '.done' : ''}`, h('span.step-dot'), h('span', step.label))));
+  const actions = [];
+  if (f.can_choose) {
+    for (const [mode, label, hint] of [['self', 'Deliver it myself', 'Your shop or staff delivers it. The customer confirms with a delivery code.'],
+      ['network', 'Find a NearBuy runner', 'A verified delivery partner collects it and delivers it.']]) {
+      if (mode === f.mode) continue;
+      actions.push(h('button.btn', { type: 'button', title: hint, onClick: (e) => busy(e.currentTarget, async () => {
+        const res = await api(`/orders/${order.code}/fulfilment`, { method: 'POST', body: { mode } });
+        toast(mode === 'self' ? 'Your shop will deliver this order.' : 'This order will be delivered by a NearBuy partner.', 'success');
+        if (res && res.fulfilment) reload();
+      }) }, mode === 'self' ? 'Deliver it myself' : 'Find a NearBuy runner'));
+    }
+  }
+  let interactive = null;
+  if (f.mode === 'pickup' && ['packed', 'ready_to_ship'].includes(order.status)) {
+    interactive = codeEntry({ title: 'Collection code', help: 'Ask the customer for the 4-digit collection code shown in their order, then confirm the hand-over.',
+      action: { path: `/seller/orders/${order.code}/collect`, order: order.code }, label: 'Confirm collection' });
+  }
+  if (f.mode === 'self' && ['packed', 'ready_to_ship', 'shipped'].includes(order.status)) {
+    interactive = codeEntry({ title: 'Delivery code', help: 'Ask the customer for the 4-digit delivery code from their order page, then confirm it.',
+      action: { path: `/seller/orders/${order.code}/self-delivered`, order: order.code }, label: 'Confirm delivery' });
+  }
+  return card({
+    title: 'Fulfilment', subtitle: f.instructions,
+    actions: [modeBadge, f.delivery && f.delivery.code ? h('a.btn.sm', { href: `/seller/deliveries/${f.delivery.code}` }, `Delivery ${f.delivery.code}`) : null],
+    body: h('div.stack.sm', steps, actions.length ? h('div.row.wrap', h('span.small.muted', 'Change how this order is delivered:'), actions) : null, interactive),
+  });
+}
+
 export async function orderDetail(ctx) {
-  const { order: o } = await api(`/orders/${ctx.params.code}`);
+  const [{ order: o }, ful] = await Promise.all([
+    api(`/orders/${ctx.params.code}`),
+    api(`/seller/orders/${ctx.params.code}/fulfilment`).catch(() => ({ fulfilment: null })),
+  ]);
   const cancelled = o.status === 'cancelled';
   const at = FLOW.findIndex(([key]) => key === o.status);
   const stepper = h('div.stepper', FLOW.map(([key, label], i) => h(`div.step${!cancelled && i < at ? '.done' : ''}${!cancelled && i === at ? (o.status === 'delivered' ? '.done' : '.current') : ''}`, { dataset: { n: i + 1 } }, label)), cancelled ? h('div.step.cancelled', { dataset: { n: '' } }, 'Cancelled') : null);
@@ -93,6 +149,7 @@ export async function orderDetail(ctx) {
       actions.length ? h('div.row.wrap', h('span.small.muted', 'Next step:'), actions) : h('p.small.muted', cancelled || o.status === 'delivered' ? 'This order is closed. No further actions are available.' : can('orders.write') ? 'No action is available at this stage.' : 'Your role can view orders but not change them.'))),
     h('div.grid.main-side',
       h('div.stack',
+        fulfilmentCard(ful.fulfilment, o),
         card({ title: 'Items', flush: true, body: h('div', dataTable({ rows: o.items, columns: [
           { label: 'Product', render: (it) => h('div.cell-product', thumb(it.image_id, it.title), h('div', it.product_code ? h('a', { href: `/seller/products/${it.product_code}` }, it.title) : h('span.strong', it.title), h('small', `${it.variant_label ? `${it.variant_label} · ` : ''}SKU ${it.sku}`))) },
           { label: 'Qty', align: 'right', render: (it) => num(it.qty) }, { label: 'Unit price', align: 'right', render: (it) => inr(it.unit_price) }, { label: 'Taxable value', align: 'right', render: (it) => inr(it.taxable_value) }, { label: `GST`, align: 'right', render: (it) => `${inr(it.tax_amount)} (${it.gst_rate}%)` }, { label: 'Total', align: 'right', render: (it) => h('b', inr(it.line_total)) }] }),

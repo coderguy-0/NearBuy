@@ -61,12 +61,59 @@ export async function deliveries() {
     pageHead({ title: 'Deliveries', subtitle: 'Local orders carried by the delivery partner network. Updates appear here as they happen.', trail: ['Deliveries'],
       actions: [h('a.btn', { href: '/seller/deliveries/tickets' }, 'Delivery issues'), d.test_tools ? h('button.btn.primary', { type: 'button', onClick: () => testOrder(d.categories) }, 'Create test order') : null] }),
     banner(d.coverage.ok ? '' : 'warn', [h('b', d.coverage.ok ? `Zone: ${d.coverage.zone} · pickup from ${d.coverage.pickup}. ` : 'Not covered. '), d.coverage.message]),
-    total ? h('div', { style: { display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(260px, 1fr)', gap: '14px', overflowX: 'auto', paddingBottom: '8px', alignItems: 'start' } },
-      LANES.map(([key, label, hint]) => h('section.stack.sm', { 'aria-label': label }, h('div', h('b', `${label} `), h('span.muted', d.board[key].length), h('div.tiny.muted', hint)), d.board[key].length ? d.board[key].map((x) => tile(x, d.can_write)) : h('div.small.muted', { style: { padding: '12px', border: '1px dashed var(--line, #d7dce5)', borderRadius: '10px' } }, 'Nothing here'))))
+    h('div.dn-summary', h('div.dn-summary__icon', h('img', { src: '/delivery/logo.svg', alt: '', width: 34, height: 34 })),
+      h('div.grow', h('b', 'Carried by NearBuy Delivery'), h('div.small.muted', 'Pickup PINs, live partner location and handover confirmation are shared with the delivery partner app.')),
+      h('a.btn.sm', { href: '/runner/', target: '_blank', rel: 'noopener' }, 'Open partner app')),
+    total ? h('div', { class: 'dn-board' },
+      LANES.map(([key, label, hint]) => h('section.dn-lane', { 'aria-label': label }, h('div.dn-lane__head', h('b', `${label} `), h('span.dn-lane__n', d.board[key].length), h('div.tiny.muted', hint)), d.board[key].length ? d.board[key].map((x) => tile(x, d.can_write)) : h('div.dn-lane__empty', 'Nothing here'))))
       : emptyState({ ico: 'truck', title: 'No local deliveries yet', text: 'When a customer in your delivery zone places an order, it appears here with its preparation, pickup and delivery status.' }));
 }
+const OPEN_FOR_APPOINTMENT = ['awaiting_assignment', 'searching_partner', 'offer_sent', 'reassignment_required'];
+
+/** Seller-side runner discovery: who can take this delivery, why, and a one-click offer. */
+function runnerRow(d, c) {
+  const facts = [c.vehicle, c.pickup_km !== null && c.pickup_km !== undefined ? `${c.pickup_km} km away` : null,
+    c.pickup_eta_min ? `~${c.pickup_eta_min} min to pickup` : null].filter(Boolean).join(' · ');
+  const appoint = h('button.btn.sm.primary', { type: 'button' }, 'Appoint');
+  appoint.addEventListener('click', () => busy(appoint, async () => {
+    try {
+      const res = await api(`/seller/deliveries/${d.code}/appoint`, { method: 'POST', body: { partner_code: c.code } });
+      toast(res.message || 'Offer sent.', 'success');
+      reload();
+    } catch (err) { toast(err.message, 'error'); }
+  }));
+  return h('div.list-row',
+    h('div.grow',
+      h('div.row', h('b', c.name), h('span.muted.small', c.code),
+        c.online ? badge('Online', 'green') : badge('Offline', ''),
+        c.rating ? badge(`${c.rating} ★`, 'amber') : null),
+      facts ? h('div.small.muted', facts) : null,
+      !c.eligible && c.reasons.length ? h('div.tiny.muted', `Not eligible: ${c.reasons.join(', ')}`) : null),
+    c.eligible ? appoint : h('span.tiny.muted', 'Not available'));
+}
+
+function runnersCard(d, data) {
+  const list = data.candidates || [];
+  const eligible = list.filter((c) => c.eligible);
+  const subtitle = data.delivery.open
+    ? `${eligible.length} eligible partner${eligible.length === 1 ? '' : 's'} in this zone · ${inr(data.delivery.earning)} payout`
+    : 'This delivery is not open for a new partner.';
+  const warn = data.delivery.open && !eligible.length
+    ? banner('warn', 'No partner is eligible right now: they may be offline, outside the zone, carrying another order, or their location is stale. Try again shortly, or deliver this order yourself.')
+    : null;
+  const rows = list.length
+    ? h('div.list', list.map((c) => runnerRow(d, c)))
+    : h('p.small.muted', 'No delivery partners are registered in this zone yet.');
+  return card({ title: 'Find a NearBuy runner', subtitle,
+    body: h('div.stack.sm', warn, rows,
+      h('p.tiny.muted', 'An appointed partner receives a time-limited offer in their app. Nothing is assigned until they accept, and the payout they see is the payout recorded here.')) });
+}
+
 export async function deliveryDetail(ctx) {
   const [{ delivery: d }, board] = await Promise.all([api(`/seller/deliveries/${ctx.params.code}`), api('/seller/deliveries')]);
+  const runners = OPEN_FOR_APPOINTMENT.includes(d.status)
+    ? await api(`/seller/deliveries/${ctx.params.code}/candidates`).catch(() => null)
+    : null;
   watch();
   const write = can('orders.write');
   const closed = ['delivered', 'returned_to_seller', 'cancelled'].includes(d.status);
@@ -94,6 +141,7 @@ export async function deliveryDetail(ctx) {
           kv([['Package count', d.package_count], ['Package type', d.package_type], ['Weight', d.weight_kg ? `${d.weight_kg} kg` : null], ['Special handling', d.special_handling ? 'Yes' : 'No'], ['Order value', inr(d.order_total)], ['Payment', d.payment_type === 'cod' ? `Cash on delivery — partner collects ${inr(d.cod_amount)}` : 'Prepaid']].filter((x) => x[1] !== null))) }),
         card({ title: 'Delivery timeline', body: timeline(d.timeline.map((e) => ({ title: e.label, note: e.note, created_at: e.created_at, actor: e.actor_name })), { doneAll: true }) })),
       h('div.stack',
+        runners ? runnersCard(d, runners) : null,
         card({ title: 'Delivery partner', body: p ? h('div.stack.sm', kv([['Name', h('b', p.first_name)], ['Vehicle', p.vehicle], p.vehicle_number_ending ? ['Number plate ending', p.vehicle_number_ending] : null, p.rating ? ['Rating', `${p.rating} ★`] : null, p.phone_masked ? ['Phone', p.phone_masked] : null, p.third_party ? ['Type', 'Third-party logistics'] : null]),
           d.partner_location ? h('p.small.muted', `Live location updated ${ago(d.partner_location.at)}.`) : null, d.eta_at && !closed ? h('p.small', 'Customer arrival estimate: ', h('b', clock(d.eta_at))) : null,
           h('p.tiny.muted', 'Hand the order only to this partner. The partner\'s phone number is masked for privacy.')) : h('p.muted', closed ? 'No partner was assigned.' : 'A partner is being found. You will be notified when one is assigned.') }),
